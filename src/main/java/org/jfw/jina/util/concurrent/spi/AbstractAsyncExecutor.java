@@ -1,7 +1,8 @@
 package org.jfw.jina.util.concurrent.spi;
 
-import java.util.LinkedList;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.locks.ReentrantLock;
@@ -26,10 +27,11 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	protected final Runnable closeTask;
 	protected volatile Thread thread;
 	protected volatile int state = ST_NOT_STARTED;
+	
+	
 
-	protected LinkedList<AsyncTask> tasks = new LinkedList<AsyncTask>();
-	protected ConcurrentLinkedQueue<AsyncTask> syncTask = new ConcurrentLinkedQueue<AsyncTask>();
-
+	protected Map<Object,Object> objCache = new HashMap<Object,Object>();
+	
 	public AbstractAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask) {
 		assert null != group;
 		assert null != closeTask;
@@ -38,23 +40,20 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 
 		hRTask = new Node();
 		tRTask = new Node();
-		hRTask.next = tRTask;
-		tRTask.prev = hRTask;
+		initLinked(hRTask,tRTask);
+
 
 		hQTask = new Node();
 		tQTask = new Node();
-		hQTask.next = tQTask;
-		tQTask.prev = hQTask;
-
+		initLinked(hQTask,tQTask);
+		
 		hDTask = new Node();
 		tDTask = new Node();
-		hDTask.next = tDTask;
-		tDTask.prev = hDTask;
+		initLinked(hDTask,tDTask);
 
 		hSTask = new Node();
 		tSTask = new Node();
-		hSTask.next = tSTask;
-		tSTask.prev = hSTask;
+		initLinked(hSTask,tSTask);
 	}
 
 	public AsyncExecutorGroup group() {
@@ -93,14 +92,12 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		node.item = task;
 		if (this.inLoop()) {
 			++numQTask;
-			tQTask.prev.next = node;
-			node.next = tQTask;
+			tQTask.prev(node);
 		} else {
 			lock.lock();
 			try {
 				++nSTask;
-				tSTask.prev.next = node;
-				node.next = tSTask;
+				tSTask.prev(node);
 			} finally {
 				lock.unlock();
 			}
@@ -129,8 +126,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 					break;
 				}
 			}
-			end.prev.next = node;
-			node.next = end;
+			end.prev(node);
 			++numDTask;
 		} else {
 			this.submit(new AsyncTask() {
@@ -154,9 +150,25 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 
 	protected abstract void wakeup();
 
+	@SuppressWarnings("unchecked")
+	@Override
+	public <T> T getObject(Object key) {
+		return (T) objCache.get(key);
+	}
+
+
 	@Override
 	public void run() {
 		try {
+			thread = Thread.currentThread();
+			for(AsyncTask task :pendingTasks()){
+				try{
+					task.execute(this);
+					task.completed(this);
+				}catch(Throwable thr){
+					task.failed(thr,this);
+				}
+			}
 			for (;;) {
 				sTaskCopyToRunning();
 				qTaskCopyToRunning();
@@ -187,7 +199,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	}
 
 	public abstract void handleRunningTask();
-
+	public abstract List<AsyncTask> pendingTasks();
 	public abstract void cleanup();
 
 	// ------------------------- sync Task----------------------------
@@ -211,7 +223,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			if (nSTask > 0) {
 				nRTask += nSTask;
 				tRTask.prev.next = hSTask.next;
-				hSTask.next.prev = tRTask.prev;
+				hSTask.next.prev = tRTask.prev;				
 				tRTask.prev = tSTask.prev;
 				tRTask.prev.next = tRTask;
 				hSTask.next = tSTask;
@@ -249,6 +261,8 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 				tRTask.prev.next = tRTask;
 				node.prev = hDTask;
 				hDTask.next = node;
+				
+				
 			}
 		}
 	}
@@ -258,7 +272,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		if (numDTask > 0) {
 			Node node = hDTask.next;
 			while (node != tDTask) {
-				node.item.cancled(this);
+				((AsyncTask)node.item).cancled(this);
 			}
 			numDTask = 0;
 			replace(hDTask.next, tDTask.prev);
@@ -293,7 +307,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		if (numQTask > 0) {
 			Node node = hQTask.next;
 			while (node != tQTask) {
-				node.item.cancled(this);
+				((AsyncTask)node.item).cancled(this);
 			}
 			numQTask = 0;
 			replace(hQTask.next, tQTask.prev);
@@ -326,7 +340,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		if (nRTask != 0) {
 			Node node = hRTask.next;
 			while (node != tRTask) {
-				AsyncTask task = node.item;
+				AsyncTask task = ((AsyncTask)node.item);
 				try {
 					task.execute(this);
 					task.completed(this);
@@ -347,7 +361,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		if (nRTask != 0) {
 			Node node = hRTask.next;
 			while (node != tRTask) {
-				node.item.cancled(this);
+				((AsyncTask)node.item).cancled(this);
 				node = node.next;
 			}
 			replace(hRTask.next, tRTask.prev);
@@ -364,7 +378,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			long bTime = System.nanoTime();
 			Node node = hRTask.next;
 			while (node != tRTask && ((System.nanoTime() - bTime)) < time) {
-				AsyncTask task = node.item;
+				AsyncTask task = ((AsyncTask)node.item);
 				try {
 					task.execute(this);
 					task.completed(this);
@@ -385,12 +399,12 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	// ------------------------------------------ Node
 	// Pool--------------------------------------
 	private static final int MAX_NUM_POOLED_NODE = SystemPropertyUtil.getInt("org.jfw.jina.util.concurrent.spi.AbstractAsyncTaskExecutor.MAX_NUM_POOLED_NODE",
-			1024);
+			1024*1024);
 
 	private int nPNode = 0;
 	private final Node hPNode = new Node();
 
-	protected Node getNode() {
+	public Node getNode() {
 		Node ret = hPNode.next;
 		if (null == ret) {
 			ret = new Node();
@@ -401,7 +415,8 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		return ret;
 	}
 
-	protected void replace(Node node) {
+	
+	public void replace(Node node) {
 		if (nPNode < MAX_NUM_POOLED_NODE) {
 			++nPNode;
 			node.next = hPNode.next;
@@ -411,7 +426,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		node.prev = null;
 	}
 
-	protected void replace(Node begin, Node end) {
+	public void replace(Node begin, Node end) {
 		end.next = null;
 		begin.prev = null;
 		int cnt = 0;
@@ -436,11 +451,48 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			}
 		}
 	}
+	
+	public static void initLinked(Node begin,Node end){
+		begin.prev = null;
+		begin.next=end;
+		end.prev = begin;
+		end.next = null;
+	}
 
-	protected static class Node {
-		AsyncTask item;
-		Node next;
-		Node prev;
-		long time;
+
+	public static class Node {
+		public Object item;
+		public Node next;
+		public Node prev;
+		public long time;
+		
+		public void linkNext(Node node){
+			node.prev = this;
+			this.next = node;
+		}
+		public void linkPrev(Node node){
+			node.next = this;
+			this.prev = node;
+		}
+		public void prev(Node node){
+			Node op = this.prev;
+			op.next = node;
+			node.next = this;
+			this.prev = node;
+			node.prev = op;
+		}
+		public void next(Node node){
+			Node on = this.next;
+			this.next =node;
+			node.next = on;
+			on.prev = node;
+			node.prev  = this;
+		}
+		public void remove(){
+			Node pn = this.prev;
+			Node nn = this.next;
+			pn.next = nn;
+			nn.prev = pn;
+		}
 	}
 }

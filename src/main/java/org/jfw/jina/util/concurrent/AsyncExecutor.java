@@ -9,4 +9,5 @@ public interface AsyncExecutor {
     void shutdown();
     void submit(AsyncTask task);
     void schedule(AsyncTask task, long delay, TimeUnit unit);
+    <T> T getObject(Object key);
 }

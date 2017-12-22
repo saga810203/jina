@@ -8,7 +8,10 @@ import java.nio.channels.Selector;
 import java.nio.channels.spi.SelectorProvider;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,6 +54,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 	}
 
 	private Selector selector;
+	private Selector unwrappedSelector;
 	private SelectedSelectionKeySet selectedKeys;
 
 	private volatile int ioRatio = 50;
@@ -67,6 +71,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 		}
 
 		if (DISABLE_KEYSET_OPTIMIZATION) {
+			this.unwrappedSelector = unwrappedSelector;
 			return unwrappedSelector;
 		}
 
@@ -90,6 +95,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 		});
 
 		if (!(maybeSelectorImplClass instanceof Class) || !((Class<?>) maybeSelectorImplClass).isAssignableFrom(unwrappedSelector.getClass())) {
+			this.unwrappedSelector =unwrappedSelector;
 			return unwrappedSelector;
 		}
 
@@ -127,11 +133,13 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 			// Exception e = (Exception) maybeException;
 			// logger.trace("failed to instrument a special java.util.Set
 			// into:{}", unwrappedSelector, e);
+			this.unwrappedSelector =unwrappedSelector;
 			return unwrappedSelector;
 		}
 		selectedKeys = selectedKeySet;
 		// logger.trace("instrumented a special java.util.Set into: {}",
 		// unwrappedSelector);
+		this.unwrappedSelector =unwrappedSelector;
 		return new SelectedSelectionKeySetSelector(unwrappedSelector, selectedKeySet);
 	}
 
@@ -143,10 +151,11 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 	 */
 	private final AtomicBoolean wakenUp = new AtomicBoolean();
 
-	public NioAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, SelectorProvider selectorProvider) {
+	public NioAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, SelectorProvider selectorProvider,Map<Object,Object> reses) {
 		super(group, closeTask);
 		this.provider = selectorProvider;
 		selector = openSelector();
+		this.objCache .putAll(reses);
 	}
 
 	int selectNow() throws IOException {
@@ -318,6 +327,10 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 		}
 	}
 
+	public Selector unwrappedSelector() {
+		return unwrappedSelector;
+	}
+
 	private void processSelectedKeysPlain(Set<SelectionKey> selectedKeys) {
 		// check if the set is empty and if so just return to not create garbage
 		// by
@@ -354,7 +367,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 
 	private void processSelectedKey(SelectionKey k, AsyncChannel ch) {
 		if (!k.isValid()) {
-			ch.close(this);
+			ch.close();
 			return;
 		}
 		try {
@@ -370,23 +383,23 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 				int ops = k.interestOps();
 				ops &= ~SelectionKey.OP_CONNECT;
 				k.interestOps(ops);
-				ch.connected(this);
+				ch.connected();
 			}
 
 			// Process OP_WRITE first as we may be able to write some queued
 			// buffers and so free memory.
 			if ((readyOps & SelectionKey.OP_WRITE) != 0) {
-				ch.write(this);
+				ch.write();
 			}
 
 			// Also check for readOps of 0 to workaround possible JDK bug which
 			// may otherwise lead
 			// to a spin loop
 			if ((readyOps & (SelectionKey.OP_READ | SelectionKey.OP_ACCEPT)) != 0 || readyOps == 0) {
-				ch.read(this);
+				ch.read();
 			}
 		} catch (CancelledKeyException ignored) {
-			ch.close(this);
+			ch.close();
 		}
 	}
 
@@ -406,7 +419,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 		// ArrayList<AsyncChannel>(keys.size());
 		for (SelectionKey k : keys) {
 			AsyncChannel channel = (AsyncChannel) k.attachment();
-			channel.close(this);
+			channel.close();
 		}
 	}
 
@@ -472,7 +485,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 				channel.setSelectionKey(newKey);
 				// nChannels++;
 			} catch (Exception e) {
-				channel.close(this);
+				channel.close();
 			}
 		}
 
@@ -504,5 +517,10 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 			// logger.warn("Failed to close a selector.", e);
 		}
 
+	}
+
+	@Override
+	public List<AsyncTask> pendingTasks() {
+		return new ArrayList<AsyncTask>();
 	}
 }
