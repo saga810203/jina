@@ -70,7 +70,7 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 	}
 
 
-	@SuppressWarnings({ "unchecked", "unchecked" })
+	@SuppressWarnings({ "unchecked" })
 	@Override
 	public void start(InetSocketAddress address, int backlog) throws Throwable {
 		if (STATE_UPDATER.compareAndSet(this, STATE_INIT, STATE_STARTING)) {

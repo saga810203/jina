@@ -172,9 +172,10 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 		Selector selector = this.selector;
 		try {
 			int selectCnt = 0;
+			Long nextScheduleTime = this.nextScheduleDeadLine();
 			long currentTimeNanos = System.nanoTime();
 			long selectDeadLineNanos = currentTimeNanos
-					+ (numDTask > 0 ? Math.max(0, hDTask.next.time - (currentTimeNanos - START_TIME)) : SCHEDULE_PURGE_INTERVAL);
+					+ (nextScheduleTime!=null ? Math.max(0, nextScheduleTime - (currentTimeNanos - START_TIME)) : SCHEDULE_PURGE_INTERVAL);
 			for (;;) {
 				long timeoutMillis = (selectDeadLineNanos - currentTimeNanos + 500000L) / 1000000L;
 				if (timeoutMillis <= 0) {
@@ -268,13 +269,13 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 
 	public void handleRunningTask() {
 		try {
-			if (nRTask > 0) {
-				selectNow();
-			} else {
+			if (runningTasks.isEmpty()) {
 				select(wakenUp.getAndSet(false));
 				if (wakenUp.get()) {
 					selector.wakeup();
 				}
+			} else {
+				selectNow();
 			}
 			needsToSelectAgain = false;
 			final int ioRatio = this.ioRatio;

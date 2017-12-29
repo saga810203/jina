@@ -3,9 +3,11 @@ package org.jfw.jina.http.server;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
+import org.jfw.jina.util.common.Queue;
+import org.jfw.jina.util.common.Queue.Node;
 import org.jfw.jina.util.concurrent.AsyncChannel;
 import org.jfw.jina.util.concurrent.AsyncExecutor;
-import org.jfw.jina.util.concurrent.spi.AbstractAsyncExecutor.Node;
+import org.jfw.jina.util.concurrent.spi.AbstractAsyncExecutor;
 
 public class HttpChannel implements AsyncChannel{
 	
@@ -14,26 +16,21 @@ public class HttpChannel implements AsyncChannel{
 	private HttpAsyncExecutor executor;
 	
 	private Node keepAliveNode;
+	private final Queue keepAliveQueue;
+	private final long keepAliveTimeout;
 	
 	
 	public HttpChannel(AsyncExecutor executor,SocketChannel javaChannel ) {
 		this.executor=(HttpAsyncExecutor)executor;
 		this.javaChannel = javaChannel;
-		this.keepAliveNode = this.executor.getNode();
-		this.keepAliveNode.next = null;
-		this.keepAliveNode.prev = null;
-		this.keepAliveNode.item = this;
-		this.keepAliveNode.time = Long.MAX_VALUE;
+		this.keepAliveQueue = this.executor.getKeepAliveQueue();
+		this.keepAliveTimeout = this.executor.getKeepAliveTimeout();
 	}
 
-	public Node getKeepAliveNode() {
-		return keepAliveNode;
-	}
 	
 	public void removeKeepAliveCheck(){
-		Node node = this.keepAliveNode.next;
-		node.prev = this.keepAliveNode.prev;
-		node.prev = node;
+		assert null != this.keepAliveNode;
+		this.keepAliveQueue.remove(this.keepAliveNode);
 	}
 
 	@Override
@@ -42,16 +39,16 @@ public class HttpChannel implements AsyncChannel{
 		try{
 			
 		}finally{
-			this.executor.checkKeepAlive(this);
+			this.keepAliveNode = this.keepAliveQueue.add(System.currentTimeMillis() + this.keepAliveTimeout);
 		}
 	}
 
 	@Override
 	public void write() {
 		try{
-			
+
 		}finally{
-			this.executor.checkKeepAlive(this);
+			this.keepAliveNode = this.keepAliveQueue.add(System.currentTimeMillis() + this.keepAliveTimeout);
 		}
 	}
 
@@ -68,6 +65,10 @@ public class HttpChannel implements AsyncChannel{
 	@Override
 	public void connected() {
 		// TODO Auto-generated method stub
+		
+	}
+	
+	public void keepAliveTimeout(){
 		
 	}
 

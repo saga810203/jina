@@ -7,6 +7,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.jfw.jina.util.common.Queue;
+import org.jfw.jina.util.common.Queue.Handler;
+import org.jfw.jina.util.common.Queue.Matcher;
+import org.jfw.jina.util.common.Queue.Node;
 import org.jfw.jina.util.concurrent.AsyncExecutor;
 import org.jfw.jina.util.concurrent.AsyncExecutorGroup;
 import org.jfw.jina.util.concurrent.AsyncTask;
@@ -27,33 +31,18 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	protected final Runnable closeTask;
 	protected volatile Thread thread;
 	protected volatile int state = ST_NOT_STARTED;
-	
-	
 
-	protected Map<Object,Object> objCache = new HashMap<Object,Object>();
-	
+	protected Map<Object, Object> objCache = new HashMap<Object, Object>();
+	protected LinkedQueue runningTasks = new LinkedQueue();
+	private LinkedQueue waitTasks = new LinkedQueue();
+	private LinkedQueue delayTasks = new LinkedQueue();
+	private LinkedQueue syncTasks = new LinkedQueue();
+
 	public AbstractAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask) {
 		assert null != group;
 		assert null != closeTask;
 		this.group = group;
 		this.closeTask = closeTask;
-
-		hRTask = new Node();
-		tRTask = new Node();
-		initLinked(hRTask,tRTask);
-
-
-		hQTask = new Node();
-		tQTask = new Node();
-		initLinked(hQTask,tQTask);
-		
-		hDTask = new Node();
-		tDTask = new Node();
-		initLinked(hDTask,tDTask);
-
-		hSTask = new Node();
-		tSTask = new Node();
-		initLinked(hSTask,tSTask);
 	}
 
 	public AsyncExecutorGroup group() {
@@ -88,16 +77,12 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	}
 
 	public void submit(final AsyncTask task) {
-		Node node = getNode();
-		node.item = task;
 		if (this.inLoop()) {
-			++numQTask;
-			tQTask.prev(node);
+			waitTasks.add(task);
 		} else {
 			lock.lock();
 			try {
-				++nSTask;
-				tSTask.prev(node);
+				syncTasks.add(task);
 			} finally {
 				lock.unlock();
 			}
@@ -113,21 +98,47 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		new Thread(this).start();
 	}
 
+	private class ScheduleHandler implements Handler {
+		long time;
+		LinkedNode target;
+
+		@Override
+		public void begin(Queue queue) {
+		}
+
+		@Override
+		public boolean handle(Queue queue, Node node, Object item, Object tag) {
+			if (((Long) tag).longValue() - time > 0) {
+				((LinkedNode) node).before(target);
+				target = null;
+				return false;
+			}
+			return true;
+		}
+
+		@Override
+		public void end(Queue queue) {
+			if (target != null) {
+				((LinkedQueue) queue).tail.before(target);
+			}
+		}
+	}
+
+	private final ScheduleHandler scheduleHandler = new ScheduleHandler();
+
+	protected Long nextScheduleDeadLine() {
+		return (Long) delayTasks.firstTag();
+	}
+
 	public void schedule(final AsyncTask task, final long delay, final TimeUnit unit) {
 		if (this.inLoop()) {
-			long time = unit.toNanos(delay);
-			Node node = getNode();
+			final long time = System.nanoTime() - START_TIME + unit.toNanos(delay);
+			LinkedNode node = getNode();
 			node.item = task;
-			time = node.time = System.nanoTime() - START_TIME + time;
-
-			Node end = hDTask.next;
-			while (end != tDTask) {
-				if (time > end.time) {
-					break;
-				}
-			}
-			end.prev(node);
-			++numDTask;
+			node.tag = time;
+			scheduleHandler.target = node;
+			scheduleHandler.time = time;
+			this.delayTasks.process(scheduleHandler);
 		} else {
 			this.submit(new AsyncTask() {
 				public void failed(Throwable exc, AsyncExecutor executor) {
@@ -156,28 +167,32 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		return (T) objCache.get(key);
 	}
 
-
 	@Override
 	public void run() {
 		try {
 			thread = Thread.currentThread();
-			for(AsyncTask task :pendingTasks()){
-				try{
+			for (AsyncTask task : pendingTasks()) {
+				try {
 					task.execute(this);
 					task.completed(this);
-				}catch(Throwable thr){
-					task.failed(thr,this);
+				} catch (Throwable thr) {
+					task.failed(thr, this);
 				}
 			}
 			for (;;) {
-				sTaskCopyToRunning();
-				qTaskCopyToRunning();
-				dTaskCopyToRunning();
+				lock.lock();
+				try {
+					syncTasks.moveTo(runningTasks);
+				} finally {
+					lock.unlock();
+				}
+				waitTasks.moveTo(runningTasks);
+				delayTasks.moveTo(runningTasks, matcher);
 				handleRunningTask();
 				if (isShuttingDown()) {
-					cancleRunningTask();
-					cancleQueueTask();
-					cancleDelayTask();
+					runningTasks.processAndFree(CANCEL_HANDLER);
+					waitTasks.processAndFree(CANCEL_HANDLER);
+					delayTasks.processAndFree(CANCEL_HANDLER);
 					break;
 				}
 			}
@@ -199,215 +214,129 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	}
 
 	public abstract void handleRunningTask();
+
 	public abstract List<AsyncTask> pendingTasks();
+
 	public abstract void cleanup();
 
-	// ------------------------- sync Task----------------------------
-	protected volatile int nSTask = 0;
 	private ReentrantLock lock = new ReentrantLock(true);
-	protected Node hSTask;
-	protected Node tSTask;
 
 	protected boolean hasSyncTask() {
 		lock.lock();
 		try {
-			return nSTask > 0;
+			return !syncTasks.isEmpty();
 		} finally {
 			lock.unlock();
 		}
 	}
-
-	protected void sTaskCopyToRunning() {
-		lock.lock();
-		try {
-			if (nSTask > 0) {
-				nRTask += nSTask;
-				tRTask.prev.next = hSTask.next;
-				hSTask.next.prev = tRTask.prev;				
-				tRTask.prev = tSTask.prev;
-				tRTask.prev.next = tRTask;
-				hSTask.next = tSTask;
-				tSTask.prev = hSTask;
-				nSTask = 0;
-			}
-		} finally {
-			lock.unlock();
-		}
-	}
-
-	// ---------------------------delayed Task
-	protected int numDTask = 0;
-	protected Node hDTask;
-	protected Node tDTask;
 
 	protected boolean hasReadyDelayTask() {
-		return numDTask > 0 && ((System.nanoTime() - START_TIME) >= hDTask.next.time);
+		Long time = (Long) delayTasks.firstTag();
+		return time != null && ((System.nanoTime() - START_TIME - time) >= 0);
 	}
 
-	protected void dTaskCopyToRunning() {
-		if (numDTask > 0) {
-			long dTime = System.nanoTime() - START_TIME;
-			int match = 0;
-			Node node = hDTask.next;
-			while (node != tDTask && (node.time <= dTime)) {
-				++match;
-			}
-			if (match > 0) {
-				nRTask += match;
-				numDTask -= match;
-				tRTask.prev.next = hDTask.next;
-				hDTask.next.prev = tRTask.prev;
-				tRTask.prev = node.prev;
-				tRTask.prev.next = tRTask;
-				node.prev = hDTask;
-				hDTask.next = node;
-				
-				
-			}
+	private final Matcher matcher = new Matcher() {
+		@Override
+		public boolean match(Queue queue, Node node, Object item, Object tag) {
+			return System.nanoTime() - START_TIME - ((Long) tag) >= 0;
 		}
-	}
+	};
 
-	protected void cancleDelayTask() {
-		assert inLoop();
-		if (numDTask > 0) {
-			Node node = hDTask.next;
-			while (node != tDTask) {
-				((AsyncTask)node.item).cancled(this);
+	protected final Handler CANCEL_HANDLER = new Handler() {
+		@Override
+		public boolean handle(Queue queue, Node node, Object item, Object tag) {
+			((AsyncTask) item).cancled(AbstractAsyncExecutor.this);
+			return true;
+		}
+
+		@Override
+		public void end(Queue queue) {
+		}
+
+		@Override
+		public void begin(Queue queue) {
+		}
+	};
+
+	protected final Queue.Handler RUN_HANDLER = new Handler() {
+		@Override
+		public boolean handle(Queue queue, Node node, Object item, Object tag) {
+			AsyncTask task = (AsyncTask) item;
+			try {
+				task.execute(AbstractAsyncExecutor.this);
+				task.completed(AbstractAsyncExecutor.this);
+			} catch (Throwable exc) {
+				task.failed(exc, AbstractAsyncExecutor.this);
 			}
-			numDTask = 0;
-			replace(hDTask.next, tDTask.prev);
-			hDTask.next = tDTask;
-			tDTask.prev = hDTask;
-
+			return true;
 		}
-	}
 
-	// ------------------------------queue Task----------------------
-	protected int numQTask = 0;
-
-	protected Node hQTask;
-	protected Node tQTask;
-
-	protected void qTaskCopyToRunning() {
-		assert inLoop();
-		if (numQTask > 0) {
-			nRTask += numQTask;
-			tRTask.prev.next = hQTask.next;
-			hQTask.next.prev = tRTask.prev;
-			tRTask.prev = tQTask.prev;
-			tRTask.prev.next = tRTask;
-			hQTask.next = tQTask;
-			tQTask.prev = hQTask;
-			numQTask = 0;
+		@Override
+		public void end(Queue queue) {
 		}
-	}
 
-	protected void cancleQueueTask() {
-		assert inLoop();
-		if (numQTask > 0) {
-			Node node = hQTask.next;
-			while (node != tQTask) {
-				((AsyncTask)node.item).cancled(this);
-			}
-			numQTask = 0;
-			replace(hQTask.next, tQTask.prev);
-			hQTask.next = tQTask;
-			tQTask.prev = hQTask;
-
+		@Override
+		public void begin(Queue queue) {
 		}
-	}
-
-	// -----------------------------------------------------running task
-	// ------------------------------------------------
-	protected int nRTask = 0;
-
-	protected Node hRTask = null;
-	protected Node tRTask = null;
-
-	// protected void addRunningTask(Node node){
-	// ++nRTask;
-	// tRTask.prev.next= node;
-	// node.next = tRTask;
-	// }
-	// protected void addRunningTask(Node begin ,Node end,int cnt){
-	// nRTask +=cnt;
-	// tRTask.prev.next= begin;
-	// end.next = tRTask;
-	// }
+	};
 
 	protected void runRunningTasks() {
 		assert inLoop();
-		if (nRTask != 0) {
-			Node node = hRTask.next;
-			while (node != tRTask) {
-				AsyncTask task = ((AsyncTask)node.item);
-				try {
-					task.execute(this);
-					task.completed(this);
-				} catch (Throwable exc) {
-					task.failed(exc, this);
-				}
-				node = node.next;
-			}
-			replace(hRTask.next, tRTask.prev);
-			nRTask = 0;
-			hRTask.next = tRTask;
-			tRTask.prev = hRTask;
-		}
+		runningTasks.processAndFree(RUN_HANDLER);
 	}
 
-	protected void cancleRunningTask() {
-		assert inLoop();
-		if (nRTask != 0) {
-			Node node = hRTask.next;
-			while (node != tRTask) {
-				((AsyncTask)node.item).cancled(this);
-				node = node.next;
-			}
-			replace(hRTask.next, tRTask.prev);
-			nRTask = 0;
-			hRTask.next = tRTask;
-			tRTask.prev = hRTask;
+	// protected void cancleRunningTask() {
+	// assert inLoop();
+	// runningTasks.processAndFree(CANCEL_HANDLER);
+	// }
+
+	protected final class TimeRunHandler implements Handler {
+		private long time;
+		private long begin;
+
+		@Override
+		public void begin(Queue queue) {
+			begin = System.nanoTime();
 		}
+
+		@Override
+		public boolean handle(Queue queue, Node node, Object item, Object tag) {
+			AsyncTask task = (AsyncTask) item;
+			try {
+				task.execute(AbstractAsyncExecutor.this);
+				task.completed(AbstractAsyncExecutor.this);
+			} catch (Throwable exc) {
+				task.failed(exc, AbstractAsyncExecutor.this);
+			}
+			return System.nanoTime() - begin < time;
+		}
+
+		@Override
+		public void end(Queue queue) {
+		}
+
 	}
 
-	protected void runRunningTasks(long time) {
-		assert inLoop();
-		if (nRTask != 0) {
-			int cnt = 0;
-			long bTime = System.nanoTime();
-			Node node = hRTask.next;
-			while (node != tRTask && ((System.nanoTime() - bTime)) < time) {
-				AsyncTask task = ((AsyncTask)node.item);
-				try {
-					task.execute(this);
-					task.completed(this);
-				} catch (Throwable exc) {
-					task.failed(exc, this);
-				}
-				++cnt;
-				node = node.next;
-			}
+	protected final TimeRunHandler TIME_RUN_HANDLER = new TimeRunHandler();
 
-			replace(hRTask.next, node.prev);
-			nRTask -= cnt;
-			hRTask.next = node;
-			node.prev = hRTask;
-		}
+	protected void runRunningTasks(final long time) {
+		assert inLoop();
+		TIME_RUN_HANDLER.time = time;
+		runningTasks.processAndFree(TIME_RUN_HANDLER);
 	}
 
 	// ------------------------------------------ Node
 	// Pool--------------------------------------
 	private static final int MAX_NUM_POOLED_NODE = SystemPropertyUtil.getInt("org.jfw.jina.util.concurrent.spi.AbstractAsyncTaskExecutor.MAX_NUM_POOLED_NODE",
-			1024*1024);
+			1024 * 1024);
 
 	private int nPNode = 0;
-	private final Node hPNode = new Node();
+	private final LinkedNode hPNode = new LinkedNode();
 
-	public Node getNode() {
-		Node ret = hPNode.next;
+	private LinkedNode getNode() {
+		LinkedNode ret = hPNode.next;
 		if (null == ret) {
-			ret = new Node();
+			ret = new LinkedNode();
 		} else {
 			hPNode.next = ret.next;
 			--nPNode;
@@ -415,84 +344,265 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		return ret;
 	}
 
-	
-	public void replace(Node node) {
+	private void replace(LinkedNode node) {
+		int cnt = 1;
+		LinkedNode end = node;
+		while (end.next != null) {
+			++cnt;
+			end.item = null;
+			end.tag = null;
+		}
+
 		if (nPNode < MAX_NUM_POOLED_NODE) {
-			++nPNode;
-			node.next = hPNode.next;
+			nPNode += cnt;
+			end.next = hPNode.next;
 			hPNode.next = node;
 		}
-		node.item = null;
-		node.prev = null;
 	}
 
-	public void replace(Node begin, Node end) {
-		end.next = null;
-		begin.prev = null;
-		int cnt = 0;
-		Node n2;
-		Node node = begin.next;
-		while (node != null) {
-			++cnt;
-			node.item = null;
-			node = node.next;
+	public Queue newQueue() {
+		return new LinkedQueue();
+	}
+
+	protected class LinkedQueue implements Queue {
+		private final LinkedNode head;
+		private final LinkedNode tail;
+
+		@Override
+		public boolean isEmpty() {
+			return head.next == tail;
 		}
-		if (nPNode < MAX_NUM_POOLED_NODE) {
-			end.next = hPNode.next;
-			hPNode.next = begin;
-			nPNode += cnt;
-		} else {
-			node = begin;
-			while (node != null) {
-				n2 = node;
-				node = node.next;
-				n2.prev = null;
-				n2.next = null;
+
+		@Override
+		public LinkedNode first() {
+			LinkedNode ret = head.next;
+			return ret == tail ? null : ret;
+		}
+
+		@Override
+		public Object firstValue() {
+			LinkedNode ret = head.next;
+			return ret == tail ? null : ret.item;
+		}
+
+		@Override
+		public Object firstTag() {
+			LinkedNode ret = head.next;
+			return ret == tail ? null : ret.tag;
+		}
+
+		public LinkedQueue() {
+			this.head = new LinkedNode();
+			this.tail = new LinkedNode();
+			this.head.item = null;
+			this.tail.item = null;
+			this.head.prev = null;
+			this.head.next = this.tail;
+			this.tail.next = null;
+			this.tail.prev = this.head;
+		}
+
+		@Override
+		public void clear() {
+			if (this.head.next != this.tail) {
+				this.removeAndFree(this.head.next, this.tail.prev);
+			}
+		}
+
+		@Override
+		public Node add(Object item, Object tag) {
+			LinkedNode node = getNode();
+			node.item = item;
+			node.tag = tag;
+			this.tail.before(node);
+			return node;
+		}
+
+		@Override
+		public Node add(Object item) {
+			LinkedNode node = getNode();
+			node.item = item;
+			this.tail.before(node);
+			return node;
+		}
+
+		@Override
+		public Node before(Node node, Object item, Object tag) {
+			assert node instanceof LinkedNode;
+			LinkedNode ln = (LinkedNode) node;
+			LinkedNode ret = getNode();
+			ret.item = item;
+			ret.tag = tag;
+			ln.before(ret);
+			return ret;
+		}
+
+		@Override
+		public Node after(Node node, Object item, Object tag) {
+			assert node instanceof LinkedNode;
+			LinkedNode ln = (LinkedNode) node;
+			LinkedNode ret = getNode();
+			ret.item = item;
+			ret.tag = tag;
+			ln.after(ret);
+			return ret;
+		}
+
+		@Override
+		public void remove(Node node) {
+			assert node instanceof LinkedNode;
+			LinkedNode ln = (LinkedNode) node;
+			ln.next.prev = ln.prev;
+			ln.prev.next = ln.next;
+			ln.prev = null;
+			ln.next = null;
+		}
+
+		@Override
+		public void remove(Node begin, Node end) {
+			assert begin instanceof LinkedNode;
+			assert end instanceof LinkedNode;
+			LinkedNode bl = ((LinkedNode) begin);
+			LinkedNode el = ((LinkedNode) end);
+			bl.prev.next = el.next;
+			el.next.prev = bl.prev;
+			bl.prev = null;
+			el.next = null;
+		}
+
+		@Override
+		public void process(Handler h) {
+			h.begin(this);
+			try {
+				LinkedNode ln = head.next;
+				while (ln != tail) {
+					if (!h.handle(this, ln, ln.item, ln.tag)) {
+						break;
+					} else {
+						ln = ln.next;
+					}
+				}
+			} finally {
+				h.end(this);
+			}
+		}
+
+		@Override
+		public void removeAndFree(Node node) {
+			assert node instanceof LinkedNode;
+			this.remove(node);
+			replace((LinkedNode) node);
+		}
+
+		@Override
+		public void removeAndFree(Node begin, Node end) {
+			assert begin instanceof LinkedNode;
+			assert end instanceof LinkedNode;
+			this.remove(begin, end);
+			replace((LinkedNode) begin);
+		}
+
+		@Override
+		public void processAndFree(Handler h) {
+			LinkedNode ln = head.next;
+			h.begin(this);
+			try {
+				while (ln != tail) {
+					if (!h.handle(this, ln, ln.item, ln.tag)) {
+						break;
+					} else {
+						ln = ln.next;
+					}
+				}
+			} finally {
+				h.end(this);
+			}
+			LinkedNode n = head.next;
+			ln.prev.next = null;
+			head.next = ln;
+			ln.prev = head;
+			replace(n);
+		}
+
+		@Override
+		public void moveTo(Queue queue) {
+			assert queue instanceof LinkedQueue;
+			LinkedQueue lq = (LinkedQueue) queue;
+			LinkedNode node = this.head.next;
+			if (node != this.tail) {
+				lq.tail.before(node, this.tail.prev);
+				this.head.next = this.tail;
+				this.tail.prev = this.head;
+			}
+		}
+
+		@Override
+		public void moveTo(Queue queue, Matcher m) {
+			assert queue instanceof LinkedQueue;
+			LinkedQueue lq = (LinkedQueue) queue;
+			LinkedNode ln = head.next;
+			try {
+				while (ln != tail) {
+					if (!m.match(this, ln, ln.item, ln.tag)) {
+						break;
+					} else {
+						ln = ln.next;
+					}
+				}
+			} finally {
+				if (ln != head.next) {
+					lq.tail.before(head.next, ln.prev);
+					head.next = ln;
+					ln.prev = head;
+				}
 			}
 		}
 	}
-	
-	public static void initLinked(Node begin,Node end){
-		begin.prev = null;
-		begin.next=end;
-		end.prev = begin;
-		end.next = null;
-	}
 
+	private static class LinkedNode implements Queue.Node {
+		LinkedNode prev;
+		LinkedNode next;
+		Object item;
+		Object tag;
 
-	public static class Node {
-		public Object item;
-		public Node next;
-		public Node prev;
-		public long time;
-		
-		public void linkNext(Node node){
-			node.prev = this;
+		void before(LinkedNode node) {
+			LinkedNode ob = this.prev;
+			ob.next = node;
+			node.prev = ob;
+			node.next = this;
+			this.prev = ob;
+		}
+
+		void after(LinkedNode node) {
+			LinkedNode oa = this.next;
+			oa.prev = node;
+			node.next = oa;
 			this.next = node;
+			node.prev = this;
 		}
-		public void linkPrev(Node node){
-			node.next = this;
-			this.prev = node;
-		}
-		public void prev(Node node){
-			Node op = this.prev;
-			op.next = node;
-			node.next = this;
-			this.prev = node;
-			node.prev = op;
-		}
-		public void next(Node node){
-			Node on = this.next;
-			this.next =node;
-			node.next = on;
-			on.prev = node;
-			node.prev  = this;
-		}
-		public void remove(){
-			Node pn = this.prev;
-			Node nn = this.next;
-			pn.next = nn;
-			nn.prev = pn;
+
+		// void after(LinkedNode begin,LinkedNode end){
+		// if(begin == end){
+		// after(begin);
+		// }else{
+		// LinkedNode oa = this.next;
+		// this.next = begin;
+		// begin.prev = this;
+		// end.next = oa;
+		// oa.prev = end;
+		// }
+		// }
+		void before(LinkedNode begin, LinkedNode end) {
+			if (begin == end) {
+				this.before(begin);
+			} else {
+				LinkedNode ob = this.prev;
+				ob.next = begin;
+				begin.prev = ob;
+				end.next = this;
+				this.prev = end;
+			}
 		}
 	}
+
 }
