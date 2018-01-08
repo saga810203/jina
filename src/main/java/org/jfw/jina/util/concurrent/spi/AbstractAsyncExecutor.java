@@ -95,7 +95,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	}
 
 	public void doStartThread() {
-		new Thread(this).start();
+		new ExecutorThread(this).start();
 	}
 
 	private class ScheduleHandler implements Handler {
@@ -167,10 +167,17 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		return (T) objCache.get(key);
 	}
 
+	public void setObject(Object key, Object val) {
+		assert this.inLoop();
+		assert objCache.get(key) == null;
+		this.objCache.put(key, val);
+	}
+
 	@Override
-	public void run() {
+	public final void run() {
 		try {
 			thread = Thread.currentThread();
+			((ExecutorThread) thread).executor = this;
 			for (AsyncTask task : pendingTasks()) {
 				try {
 					task.execute(this);
@@ -605,4 +612,26 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		}
 	}
 
+	public static class ExecutorThread extends Thread {
+		private AbstractAsyncExecutor executor;
+
+		public ExecutorThread(Runnable target) {
+			super(target);
+		}
+
+		public AbstractAsyncExecutor getExecutor() {
+			return executor;
+		}
+
+		public void setExecutor(AbstractAsyncExecutor executor) {
+			this.executor = executor;
+		}
+
+		public static AbstractAsyncExecutor executor() {
+			Thread thread = Thread.currentThread();
+			if (thread instanceof ExecutorThread)
+				return ((ExecutorThread) thread).executor;
+			return null;
+		}
+	}
 }
