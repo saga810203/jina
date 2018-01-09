@@ -879,62 +879,62 @@ public interface ByteBuf {
 	// return setLongLE(index, Double.doubleToRawLongBits(value));
 	// }
 
-	/**
-	 * Transfers the specified source buffer's data to this buffer starting at
-	 * the specified absolute {@code index} until the source buffer becomes
-	 * unreadable. This method is basically same with
-	 * {@link #setBytes(int, ByteBuf, int, int)}, except that this method
-	 * increases the {@code readerIndex} of the source buffer by the number of
-	 * the transferred bytes while {@link #setBytes(int, ByteBuf, int, int)}
-	 * does not. This method does not modify {@code readerIndex} or
-	 * {@code writerIndex} of the source buffer (i.e. {@code this}).
-	 *
-	 * @throws IndexOutOfBoundsException
-	 *             if the specified {@code index} is less than {@code 0} or if
-	 *             {@code index + src.readableBytes} is greater than
-	 *             {@code this.capacity}
-	 */
-	ByteBuf setBytes(int index, ByteBuf src);
+//	/**
+//	 * Transfers the specified source buffer's data to this buffer starting at
+//	 * the specified absolute {@code index} until the source buffer becomes
+//	 * unreadable. This method is basically same with
+//	 * {@link #setBytes(int, ByteBuf, int, int)}, except that this method
+//	 * increases the {@code readerIndex} of the source buffer by the number of
+//	 * the transferred bytes while {@link #setBytes(int, ByteBuf, int, int)}
+//	 * does not. This method does not modify {@code readerIndex} or
+//	 * {@code writerIndex} of the source buffer (i.e. {@code this}).
+//	 *
+//	 * @throws IndexOutOfBoundsException
+//	 *             if the specified {@code index} is less than {@code 0} or if
+//	 *             {@code index + src.readableBytes} is greater than
+//	 *             {@code this.capacity}
+//	 */
+//	ByteBuf setBytes(int index, ByteBuf src);
 
-	/**
-	 * Transfers the specified source buffer's data to this buffer starting at
-	 * the specified absolute {@code index}. This method is basically same with
-	 * {@link #setBytes(int, ByteBuf, int, int)}, except that this method
-	 * increases the {@code readerIndex} of the source buffer by the number of
-	 * the transferred bytes while {@link #setBytes(int, ByteBuf, int, int)}
-	 * does not. This method does not modify {@code readerIndex} or
-	 * {@code writerIndex} of the source buffer (i.e. {@code this}).
-	 *
-	 * @param length
-	 *            the number of bytes to transfer
-	 *
-	 * @throws IndexOutOfBoundsException
-	 *             if the specified {@code index} is less than {@code 0}, if
-	 *             {@code index + length} is greater than {@code this.capacity},
-	 *             or if {@code length} is greater than
-	 *             {@code src.readableBytes}
-	 */
-	ByteBuf setBytes(int index, ByteBuf src, int length);
-
-	/**
-	 * Transfers the specified source buffer's data to this buffer starting at
-	 * the specified absolute {@code index}. This method does not modify
-	 * {@code readerIndex} or {@code writerIndex} of both the source (i.e.
-	 * {@code this}) and the destination.
-	 *
-	 * @param srcIndex
-	 *            the first index of the source
-	 * @param length
-	 *            the number of bytes to transfer
-	 *
-	 * @throws IndexOutOfBoundsException
-	 *             if the specified {@code index} is less than {@code 0}, if the
-	 *             specified {@code srcIndex} is less than {@code 0}, if
-	 *             {@code index + length} is greater than {@code this.capacity},
-	 *             or if {@code srcIndex + length} is greater than
-	 *             {@code src.capacity}
-	 */
-	ByteBuf setBytes(int index, ByteBuf src, int srcIndex, int length);
+//	/**
+//	 * Transfers the specified source buffer's data to this buffer starting at
+//	 * the specified absolute {@code index}. This method is basically same with
+//	 * {@link #setBytes(int, ByteBuf, int, int)}, except that this method
+//	 * increases the {@code readerIndex} of the source buffer by the number of
+//	 * the transferred bytes while {@link #setBytes(int, ByteBuf, int, int)}
+//	 * does not. This method does not modify {@code readerIndex} or
+//	 * {@code writerIndex} of the source buffer (i.e. {@code this}).
+//	 *
+//	 * @param length
+//	 *            the number of bytes to transfer
+//	 *
+//	 * @throws IndexOutOfBoundsException
+//	 *             if the specified {@code index} is less than {@code 0}, if
+//	 *             {@code index + length} is greater than {@code this.capacity},
+//	 *             or if {@code length} is greater than
+//	 *             {@code src.readableBytes}
+//	 */
+//	ByteBuf setBytes(int index, ByteBuf src, int length);
+//
+//	/**
+//	 * Transfers the specified source buffer's data to this buffer starting at
+//	 * the specified absolute {@code index}. This method does not modify
+//	 * {@code readerIndex} or {@code writerIndex} of both the source (i.e.
+//	 * {@code this}) and the destination.
+//	 *
+//	 * @param srcIndex
+//	 *            the first index of the source
+//	 * @param length
+//	 *            the number of bytes to transfer
+//	 *
+//	 * @throws IndexOutOfBoundsException
+//	 *             if the specified {@code index} is less than {@code 0}, if the
+//	 *             specified {@code srcIndex} is less than {@code 0}, if
+//	 *             {@code index + length} is greater than {@code this.capacity},
+//	 *             or if {@code srcIndex + length} is greater than
+//	 *             {@code src.capacity}
+//	 */
+//	ByteBuf setBytes(int index, ByteBuf src, int srcIndex, int length);
 
 	/**
 	 * Transfers the specified source array's data to this buffer starting at
@@ -962,19 +962,7 @@ public interface ByteBuf {
 	 */
 	ByteBuf setBytes(int index, byte[] src, int srcIndex, int length);
 
-	/**
-	 * Fills this buffer with <tt>NUL (0x00)</tt> starting at the specified
-	 * absolute {@code index}. This method does not modify {@code readerIndex}
-	 * or {@code writerIndex} of this buffer.
-	 *
-	 * @param length
-	 *            the number of <tt>NUL</tt>s to write to the buffer
-	 *
-	 * @throws IndexOutOfBoundsException
-	 *             if the specified {@code index} is less than {@code 0} or if
-	 *             {@code index + length} is greater than {@code this.capacity}
-	 */
-	ByteBuf setZero(int index, int length);
+
 
 	/**
 	 * Writes the specified {@link CharSequence} at the current
@@ -994,22 +982,7 @@ public interface ByteBuf {
 	 */
 	int setCharSequence(int index, CharSequence sequence, Charset charset);
 
-	/**
-	 * Transfers this buffer's data to a newly created buffer starting at the
-	 * current {@code readerIndex} and increases the {@code readerIndex} by the
-	 * number of the transferred bytes (= {@code length}). The returned buffer's
-	 * {@code readerIndex} and {@code writerIndex} are {@code 0} and
-	 * {@code length} respectively.
-	 *
-	 * @param length
-	 *            the number of bytes to transfer
-	 *
-	 * @return the newly created buffer which contains the transferred bytes
-	 *
-	 * @throws IndexOutOfBoundsException
-	 *             if {@code length} is greater than {@code this.readableBytes}
-	 */
-	ByteBuf readBytes(int length);
+
 
 	/**
 	 * Transfers this buffer's data to a new inputStream starting at the current
@@ -1074,7 +1047,7 @@ public interface ByteBuf {
 	 * @throws IOException
 	 *             if the specified channel threw an exception during I/O
 	 */
-	int readBytes(FileChannel out, long position, int length) throws IOException;
+	int readBytes(FileChannel out, long position) throws IOException;
 
 	/**
 	 * Increases the current {@code readerIndex} by the specified {@code length}
