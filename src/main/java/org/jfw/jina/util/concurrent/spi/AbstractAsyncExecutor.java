@@ -340,7 +340,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	private int nPNode = 0;
 	private final LinkedNode hPNode = new LinkedNode();
 
-	private LinkedNode getNode() {
+	public LinkedNode getNode() {
 		LinkedNode ret = hPNode.next;
 		if (null == ret) {
 			ret = new LinkedNode();
@@ -351,7 +351,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		return ret;
 	}
 
-	private void replace(LinkedNode node) {
+	public void release(LinkedNode node) {
 		int cnt = 1;
 		LinkedNode end = node;
 		while (end.next != null) {
@@ -366,15 +366,19 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			hPNode.next = node;
 		}
 	}
+	public void releaseSingle(LinkedNode node){
+		
+	}
 
 	public Queue newQueue() {
 		return new LinkedQueue();
 	}
 
-	protected class LinkedQueue implements Queue {
+	public class LinkedQueue implements Queue {
 		private final LinkedNode head;
 		private final LinkedNode tail;
 
+		
 		@Override
 		public boolean isEmpty() {
 			return head.next == tail;
@@ -498,7 +502,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		public void removeAndFree(Node node) {
 			assert node instanceof LinkedNode;
 			this.remove(node);
-			replace((LinkedNode) node);
+			releaseSingle((LinkedNode) node);
 		}
 
 		@Override
@@ -506,7 +510,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			assert begin instanceof LinkedNode;
 			assert end instanceof LinkedNode;
 			this.remove(begin, end);
-			replace((LinkedNode) begin);
+			release((LinkedNode) begin);
 		}
 
 		@Override
@@ -528,7 +532,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			ln.prev.next = null;
 			head.next = ln;
 			ln.prev = head;
-			replace(n);
+			release(n);
 		}
 
 		@Override
@@ -566,21 +570,23 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		}
 	}
 
-	private static class LinkedNode implements Queue.Node {
-		LinkedNode prev;
-		LinkedNode next;
-		Object item;
-		Object tag;
+	public static class LinkedNode implements Queue.Node {
+		public LinkedNode prev;
+		public LinkedNode next;
+		public Object item;
+		public Object tag;
 
-		void before(LinkedNode node) {
+		public void before(LinkedNode node) {
 			LinkedNode ob = this.prev;
 			ob.next = node;
 			node.prev = ob;
 			node.next = this;
 			this.prev = ob;
 		}
+		
+		
 
-		void after(LinkedNode node) {
+		public void after(LinkedNode node) {
 			LinkedNode oa = this.next;
 			oa.prev = node;
 			node.next = oa;
@@ -599,7 +605,7 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		// oa.prev = end;
 		// }
 		// }
-		void before(LinkedNode begin, LinkedNode end) {
+		public void before(LinkedNode begin, LinkedNode end) {
 			if (begin == end) {
 				this.before(begin);
 			} else {

@@ -21,7 +21,6 @@ public interface Queue {
 	Object firstValue();
 	Object firstTag();
 
-
 	
 	
 	

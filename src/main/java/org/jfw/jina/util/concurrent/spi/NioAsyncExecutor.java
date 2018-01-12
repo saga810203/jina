@@ -16,6 +16,8 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.jfw.jina.buffer.BufAllocator;
+import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.util.ReflectionUtil;
 import org.jfw.jina.util.concurrent.AsyncChannel;
 import org.jfw.jina.util.concurrent.AsyncExecutor;
@@ -61,7 +63,12 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 	private boolean needsToSelectAgain;
 
 	private final SelectorProvider provider;
+	
+	protected BufAllocator alloc;
 
+	public OutputBuf alloc(){
+		return alloc.buffer();
+	}
 	private Selector openSelector() {
 		final Selector unwrappedSelector;
 		try {
