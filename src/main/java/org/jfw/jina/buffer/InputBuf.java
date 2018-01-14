@@ -334,4 +334,12 @@ public interface InputBuf {
 	
 	boolean skipControlCharacters();
 	
+    /**
+     * Iterates over the readable bytes of this buffer with the specified {@code processor} in ascending order.
+     *
+     * @return {@code -1} if the processor iterated to or beyond the end of the readable bytes.
+     *         The last-visited index If the {@link ByteProcessor#process(byte)} returned {@code false}.
+     */
+    int forEachByte(ByteProcessor processor);
+	
 }

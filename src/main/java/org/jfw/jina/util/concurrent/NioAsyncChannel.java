@@ -5,6 +5,7 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
+import org.jfw.jina.buffer.EmptyBuf;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.util.concurrent.spi.AbstractAsyncExecutor.LinkedNode;
@@ -18,8 +19,6 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 	protected final LinkedNode inputEnd;
 	protected final LinkedNode outHead;
 	protected final LinkedNode outEnd;
-	protected long lastReadCount;
-	protected int lastReadNum;
 	protected boolean closeInput = false;
 
 	protected NioAsyncChannel(NioAsyncChannel<? extends T> channel) {
@@ -32,8 +31,6 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		this.inputEnd = channel.inputEnd;
 		this.outEnd = channel.outEnd;
 		this.outHead = channel.outHead;
-		this.lastReadCount = channel.lastReadCount;
-		this.lastReadNum = channel.lastReadNum;
 		this.afterRegister();
 	}
 
@@ -87,79 +84,104 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 
 	protected void closeJavaChannel() {
 		assert this.executor.inLoop();
-		LinkedNode node = inputHead.next;
-		while (node != inputEnd) {
-			InputBuf buf = (InputBuf) node.item;
-			if (buf != null) {
-				buf.release();
-				node.item = null;
-			}
-			node = node.next;
+		SocketChannel jc = this.javaChannel;
+		SelectionKey k = this.key;
+		this.javaChannel = null;
+		this.key = null;
+		if(inputHead.next!=inputEnd){
+			this.freeWriteList(inputHead.next, inputEnd.prev);
+			inputHead.next = inputEnd;
+			inputEnd.prev = inputHead;
 		}
-
-		node = outHead.next;
-		while (node != outEnd) {
-			InputBuf buf = (InputBuf) node.item;
-			AsyncTask task = (AsyncTask) node.tag;
-			if (buf != null) {
-				buf.release();
-				node.item = null;
-			}
-			if (task != null) {
-				task.cancled(executor);
-			}
-			node = node.next;
+		if(outHead.next!=outEnd){	
+			this.freeWriteList(outHead.next, outEnd.prev);
+			this.outHead.next= this.outEnd;
+			this.outEnd.prev = this.outHead;
 		}
-
-		if (this.key != null) {
+		if (k!= null) {
 			try {
-				this.key.cancel();
+				k.cancel();
 			} catch (Exception e) {
 			}
-			this.key = null;
 		}
 
-		if (this.javaChannel != null) {
+		if (jc!= null) {
 			try {
-				this.javaChannel.close();
+				jc.close();
 			} catch (Throwable t) {
 
 			}
-			this.javaChannel = null;
 		}
 	}
 
-	protected abstract void handleRead();
+	protected void appendInput(InputBuf buf) {
+		LinkedNode node = executor.getNode();
+		node.item = buf;
+		inputEnd.before(node);
+	}
+
+	protected InputBuf peekInput() {
+		return (InputBuf) inputHead.next.item;
+	}
+
+	protected InputBuf pollInput() {
+		LinkedNode node = inputHead.next;
+		if (node == inputEnd) {
+			return null;
+		} else {
+			LinkedNode next = node.next;
+			inputHead.next = next;
+			next.prev = inputHead;
+			InputBuf ret = (InputBuf) node.item;
+			executor.releaseSingle(node);
+			return ret;
+		}
+	}
+
+	protected void removeInput() {
+		assert inputHead.next != inputEnd;
+		LinkedNode node = inputHead.next;
+		LinkedNode next = node.next;
+		inputHead.next = next;
+		next.prev = inputHead;
+		InputBuf ret = (InputBuf) node.item;
+		executor.releaseSingle(node);
+		ret.release();
+	}
+
+	protected abstract void handleRead(InputBuf buf, int len);
+
 	@Override
 	public final void read() {
-		long rc = 0;
-		int rn = 0;
+		int rc = 0;
 		for (;;) {
 			OutputBuf buf = executor.alloc();
 			try {
-				rn = buf.writeBytes(this.javaChannel);
-				if (rn > 0) {
-					rc += rn;
-					LinkedNode node = executor.getNode();
-					node.item = buf.input();
-					buf.release();
-					inputEnd.before(node);
-				} else {
-					lastReadCount = rc;
-					lastReadNum = rn;
-					buf.release();
-					buf = null;
-					if(rn<0){
-						this.closeInput = true;
-					}
-					break;
+				rc = buf.writeBytes(this.javaChannel);
+				if (rc > 0) {
+					InputBuf ibuf = buf.input();
+					this.handleRead(ibuf, rc);
+					ibuf.release();
+				} else if (rc < 0) {
+					this.closeInput = true;
+					this.handleRead(EmptyBuf.INSTANCE, -1);
+					this.cleanOpRead();
+					return;
 				}
+			} catch (ClosedChannelException e) {
+				this.closeInput = true;
+				handleRead(EmptyBuf.INSTANCE, -1);
+				this.cleanOpRead();
+				return;
 			} catch (IOException e) {
+				handleRead(EmptyBuf.INSTANCE, -1);
+				this.cleanOpRead();
 				this.hanldReadException(e);
 				return;
+			} finally {
+				buf.release();
 			}
 		}
-		this.handleRead();
 	}
 
 	protected void handleWriteException(IOException e, InputBuf buf, AsyncTask task) {
@@ -201,14 +223,39 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 	}
 
 	protected void write(InputBuf buf, AsyncTask task) {
-		LinkedNode node = executor.getNode();
-		node.item = buf;
-		node.tag = task;
-		outEnd.before(node);
+		if (this.javaChannel != null) {
+			LinkedNode node = executor.getNode();
+			node.item = buf;
+			node.tag = task;
+			outEnd.before(node);
+			this.setOpWrite();
+		} else {
+			if (task != null)
+				task.cancled(executor);
+			if (buf != null)
+				buf.release();
+		}
+	}
+
+	protected void freeWriteList(LinkedNode begin, LinkedNode end) {
+		LinkedNode node = begin;this.setOpWrite();
+
+		while (node != end) {
+			write((InputBuf)node.item,(AsyncTask)node.tag);
+		}
+		write((InputBuf)end.item,(AsyncTask)end.tag);
+		end.next= null;
+		begin.prev = null;
+		executor.release(begin);
 	}
 
 	protected void write(LinkedNode begin, LinkedNode end) {
-		outEnd.before(begin, end);
+		if (this.javaChannel != null) {
+			outEnd.before(begin, end);
+			this.setOpWrite();
+		} else {
+			freeWriteList(begin,end);
+		}
 	}
 
 	@Override
@@ -258,18 +305,17 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 			}
 		}
 	}
-	
-	protected InputBuf removeFirstReadBuf(){
-		assert executor.inLoop() && inputHead.next!= inputEnd;
+
+	protected InputBuf removeFirstReadBuf() {
+		assert executor.inLoop() && inputHead.next != inputEnd;
 		LinkedNode node = inputHead.next;
 		LinkedNode next = node.next;
-		inputHead.next =next;
+		inputHead.next = next;
 		next.prev = inputHead;
-		((InputBuf)node.item).release();
-		executor.releaseSingle(node);		
+		((InputBuf) node.item).release();
+		executor.releaseSingle(node);
 		return (InputBuf) next.item;
 	}
-	
 
 	@Override
 	public void setSelectionKey(SelectionKey key) {

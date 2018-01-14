@@ -196,4 +196,14 @@ public final class EmptyBuf implements InputBuf {
 		return this;
 	}
 
+	@Override
+	public boolean skipControlCharacters() {
+		return false;
+	}
+
+	@Override
+	public int forEachByte(ByteProcessor processor) {
+		return -1;
+	}
+
 }

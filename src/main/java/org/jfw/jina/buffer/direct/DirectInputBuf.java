@@ -7,6 +7,7 @@ import java.nio.channels.FileChannel;
 import java.nio.channels.GatheringByteChannel;
 
 import org.jfw.jina.buffer.BufAllocator;
+import org.jfw.jina.buffer.ByteProcessor;
 import org.jfw.jina.buffer.InputBuf;
 
 public class DirectInputBuf implements InputBuf {
@@ -416,6 +417,16 @@ public class DirectInputBuf implements InputBuf {
 		}
 		pos = rIdx;
 		return skiped;
+	}
+
+	@Override
+	public int forEachByte(ByteProcessor processor) {
+		for(int i =pos;i<this.limit;++i){
+			if(!processor.process(this.buffer.get(i))){
+				return i-pos;
+			}
+		}
+		return -1;
 	}
 
 }
