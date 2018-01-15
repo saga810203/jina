@@ -429,4 +429,11 @@ public class DirectInputBuf implements InputBuf {
 		return -1;
 	}
 
+	@Override
+	public InputBuf duplicate(int length) {
+		assert this.limit-length >= this.pos;
+		++wrap.refCnt;
+		return new SliceInputBuf(wrap,pos, this.limit-length);
+	}
+
 }

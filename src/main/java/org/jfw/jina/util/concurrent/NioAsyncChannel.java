@@ -88,24 +88,24 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		SelectionKey k = this.key;
 		this.javaChannel = null;
 		this.key = null;
-		if(inputHead.next!=inputEnd){
+		if (inputHead.next != inputEnd) {
 			this.freeWriteList(inputHead.next, inputEnd.prev);
 			inputHead.next = inputEnd;
 			inputEnd.prev = inputHead;
 		}
-		if(outHead.next!=outEnd){	
+		if (outHead.next != outEnd) {
 			this.freeWriteList(outHead.next, outEnd.prev);
-			this.outHead.next= this.outEnd;
+			this.outHead.next = this.outEnd;
 			this.outEnd.prev = this.outHead;
 		}
-		if (k!= null) {
+		if (k != null) {
 			try {
 				k.cancel();
 			} catch (Exception e) {
 			}
 		}
 
-		if (jc!= null) {
+		if (jc != null) {
 			try {
 				jc.close();
 			} catch (Throwable t) {
@@ -166,6 +166,8 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 					this.closeInput = true;
 					this.handleRead(EmptyBuf.INSTANCE, -1);
 					this.cleanOpRead();
+					return;
+				}else{
 					return;
 				}
 			} catch (ClosedChannelException e) {
@@ -238,13 +240,14 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 	}
 
 	protected void freeWriteList(LinkedNode begin, LinkedNode end) {
-		LinkedNode node = begin;this.setOpWrite();
+		LinkedNode node = begin;
+		this.cleanOpWrite();
 
 		while (node != end) {
-			write((InputBuf)node.item,(AsyncTask)node.tag);
+			write((InputBuf) node.item, (AsyncTask) node.tag);
 		}
-		write((InputBuf)end.item,(AsyncTask)end.tag);
-		end.next= null;
+		write((InputBuf) end.item, (AsyncTask) end.tag);
+		end.next = null;
 		begin.prev = null;
 		executor.release(begin);
 	}
@@ -254,7 +257,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 			outEnd.before(begin, end);
 			this.setOpWrite();
 		} else {
-			freeWriteList(begin,end);
+			freeWriteList(begin, end);
 		}
 	}
 

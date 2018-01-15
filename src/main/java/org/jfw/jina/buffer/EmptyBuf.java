@@ -206,4 +206,9 @@ public final class EmptyBuf implements InputBuf {
 		return -1;
 	}
 
+	@Override
+	public InputBuf duplicate(int length) {
+		throw new UnsupportedOperationException();
+	}
+
 }

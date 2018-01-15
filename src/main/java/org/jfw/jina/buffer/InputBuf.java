@@ -329,6 +329,7 @@ public interface InputBuf {
 	InputBuf retain();
 	void release();
 	InputBuf duplicate();
+	InputBuf duplicate(int length);
 	InputBuf slice();
 	
 	

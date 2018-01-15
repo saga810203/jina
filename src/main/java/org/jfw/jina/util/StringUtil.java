@@ -1,5 +1,7 @@
 package org.jfw.jina.util;
 
+import java.io.UnsupportedEncodingException;
+
 public final class StringUtil {
 	private StringUtil(){}
 	public static final String EMPTY_STRING="";
@@ -40,5 +42,12 @@ public final class StringUtil {
             end--;
         }
         return end==begin ?StringUtil.EMPTY_STRING :new String(val,begin,end-begin);
+	}
+	
+	public static String urlUTF8Encoding(String src) throws UnsupportedEncodingException{
+		return  java.net.URLEncoder.encode(src,"UTF-8");
+	}
+	public static String urlUTF8Decoding(String src) throws UnsupportedEncodingException{
+		return  java.net.URLDecoder.decode(src,"UTF-8");
 	}
 }
