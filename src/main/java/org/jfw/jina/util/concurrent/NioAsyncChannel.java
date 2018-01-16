@@ -334,5 +334,193 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		assert key.attachment() == this;
 		this.key = key;
 	}
+	
+
+	protected OutputBuf writeBoolean(OutputBuf buf,boolean value){
+		if(!buf.writable(1)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeBoolean(value);
+		return buf;
+	}
+
+	protected OutputBuf writeByte(OutputBuf buf,int value){
+		if(!buf.writable(1)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeByte(value);
+		return buf;
+	}
+
+	protected OutputBuf writeShort(OutputBuf buf, int value){
+		if(!buf.writable(2)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeShort(value);
+		return buf;
+	}
+
+	protected OutputBuf writeShortLE(OutputBuf buf, int value){
+		if(!buf.writable(2)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeShortLE(value);
+		return buf;
+	}
+	
+	protected OutputBuf writeMedium(OutputBuf buf ,int value){
+		if(!buf.writable(3)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeMedium(value);
+		return buf;
+	}
+
+	protected OutputBuf writeMediumLE(OutputBuf buf ,int value){
+		if(!buf.writable(3)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeMediumLE(value);
+		return buf;
+	}
+	protected OutputBuf writeInt(OutputBuf buf ,int value){
+		if(!buf.writable(4)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeInt(value);
+		return buf;
+	}
+	protected OutputBuf writeIntLE(OutputBuf buf ,int value){
+		if(!buf.writable(4)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeIntLE(value);
+		return buf;
+	}
+
+	protected OutputBuf writeLong(OutputBuf buf ,long value){
+		if(!buf.writable(8)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeLong(value);
+		return buf;
+	}
+
+	protected OutputBuf writeLongLE(OutputBuf buf ,long value){
+		if(!buf.writable(8)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeLongLE(value);
+		return buf;
+	}
+	protected OutputBuf writeChar(OutputBuf buf ,int value){
+			if(!buf.writable(2)){
+				this.write(buf.input());
+				buf.release();
+				buf = executor.alloc();
+			}
+			buf.writeChar(value);
+			return buf;
+	}
+	protected OutputBuf writeFloat(OutputBuf buf ,float value){
+		if(!buf.writable(4)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeFloat(value);
+		return buf;
+	}
+	protected OutputBuf writeFloatLE(OutputBuf buf ,float value){
+		if(!buf.writable(4)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeFloatLE(value);
+		return buf;
+	}
+	protected OutputBuf writeDouble(OutputBuf buf ,double value){
+		if(!buf.writable(8)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeDouble(value);
+		return buf;
+	}
+	protected OutputBuf writeDoubleLE(OutputBuf buf ,double value){
+		if(!buf.writable(8)){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		buf.writeDouble(value);
+		return buf;
+	}
+	protected OutputBuf writeBytes(OutputBuf buf ,byte[] src, int srcIndex, int length){
+		if(!buf.writable()){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		while(length>0){
+			int canWriteCount  = buf.writableBytes();
+			if(length>canWriteCount){
+			    buf.writeBytes(src,srcIndex,canWriteCount);
+			    srcIndex+= canWriteCount;
+			    length-=canWriteCount;
+			    this.write(buf.input());
+			    buf.release();
+			    buf = executor.alloc();
+			}else{
+				buf.writeBytes(src,srcIndex,length);
+				break;
+			}			
+		}
+		return buf;
+	}
+	
+	protected OutputBuf writeAscii(OutputBuf buf,String src){
+		if(!buf.writable()){
+			this.write(buf.input());
+			buf.release();
+			buf = executor.alloc();
+		}
+		int idx  = 0;
+		int len = src.length();
+		do{
+			int wlen = Integer.min(buf.writableBytes()+idx, len);
+			while(idx< wlen){
+				buf.writeByte(src.charAt(idx++));
+			}
+			if(idx<len){
+				this.write(buf.input());
+				buf.release();
+				buf = executor.alloc();
+			}
+		}while(idx<len);
+		return buf;
+	}
 
 }

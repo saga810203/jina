@@ -1,8 +1,10 @@
 package org.jfw.jina.util;
 
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charset;
 
 public final class StringUtil {
+	public static final Charset UTF8=Charset.forName("UTF-8");
 	private StringUtil(){}
 	public static final String EMPTY_STRING="";
 	
@@ -49,5 +51,9 @@ public final class StringUtil {
 	}
 	public static String urlUTF8Decoding(String src) throws UnsupportedEncodingException{
 		return  java.net.URLDecoder.decode(src,"UTF-8");
+	}
+	
+	public static byte[] utf8(String src){
+		return src.getBytes(UTF8);
 	}
 }

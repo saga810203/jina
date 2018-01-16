@@ -2,6 +2,8 @@ package org.jfw.jina.http;
 
 import java.nio.charset.Charset;
 
+import org.jfw.jina.util.StringUtil;
+
 public class HttpResponseStatus {
 	private final int code;
 	private final byte[] reason;
@@ -10,14 +12,12 @@ public class HttpResponseStatus {
 
 	private static Charset UTF8 = Charset.forName("UTF-8");
 
-	private static byte[] utf8(String s) {
-		return s.getBytes(UTF8);
-	}
+
 
 	private HttpResponseStatus(int code, String reason, boolean keepAlive, byte[] defaultContent) {
 		assert code > 99 && code < 600 && reason != null && reason.length() > 0;
 		this.code = code;
-		this.reason = utf8(reason);
+		this.reason = StringUtil.utf8(reason);
 		this.keepAlive = keepAlive;
 		this.defautContent = defaultContent;
 	}
@@ -31,16 +31,24 @@ public class HttpResponseStatus {
 	}
 
 	private HttpResponseStatus(int code, String reason, boolean keepAlive) {
-		this(code, reason, true, null);
+		assert code > 99 && code < 600 && reason != null && reason.length() > 0;
+		this.code = code;
+		this.reason = StringUtil.utf8(reason);
+		this.keepAlive = true;
+		if(code>399 && code < 500){
+			this.defautContent = StringUtil.utf8("<html><head><title>"+code+" "+reason+"</title></head><body bgcolor=\"white\"><center><h1>"+code +" "+reason +"</h1></center><hr><center>jina async server</center></body></html>");
+		}else {
+			this.defautContent = null;
+		}
 	}
 
 	private HttpResponseStatus(int code, String reason) {
 		assert code > 99 && code < 600 && reason != null && reason.length() > 0;
 		this.code = code;
-		this.reason = utf8(reason);
+		this.reason = StringUtil.utf8(reason);
 		if(code>399 && code < 500){
 			this.keepAlive = false;
-			this.defautContent = utf8("<html><head><title>"+code+" "+reason+"</title></head><body bgcolor=\"white\"><center><h1>"+code +" "+reason +"</h1></center><hr><center>jina async server</center></body></html>");
+			this.defautContent = StringUtil.utf8("<html><head><title>"+code+" "+reason+"</title></head><body bgcolor=\"white\"><center><h1>"+code +" "+reason +"</h1></center><hr><center>jina async server</center></body></html>");
 		}else {
 			this.keepAlive = true;
 			this.defautContent = null;

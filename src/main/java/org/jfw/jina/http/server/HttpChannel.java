@@ -237,6 +237,47 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		this.chunkSize = 0;
 	}
 
+	protected void createInvalidHttpresutst(HttpResponseStatus error){
+		this.contentLength = Long.MAX_VALUE;
+		this.currentState = State.READ_FIXED_LENGTH_CONTENT;
+
+		
+		OutputBuf buf = executor.alloc();
+		
+		byte[] bs = error.getReason();
+		buf = this.writeAscii(buf, "HTTP/1.1 "+error.getCode()+' ');
+		buf = this.writeBytes(buf, bs,0,bs.length);
+		buf = this.writeBytes(buf, HttpConsts.CRLF, 0,HttpConsts.CRLF.length);
+		
+		
+		
+		
+	}
+	
+	protected OutputBuf writeHttpHeader(OutputBuf buf,String name,String value){
+		int sBegin =0;
+		int sEnd = value.length();
+		int lineIdx = name.length();
+		buf=this.writeAscii(buf, name);
+		buf=this.writeByte(buf, ':');
+	    if(lineIdx+sEnd >= 1022){
+	    	buf = this.writeAscii(buf, value);
+	    	buf = this.writeBytes(buf,HttpConsts.CRLF,0,HttpConsts.CRLF.length);
+	    }else{
+	    	
+	    }
+		
+		while(sBegin< sEnd){
+			int n = 1023-lineIdx;
+			
+			buf = this.writeAscii(buf, value.substring(sBegin,sBegin+n));
+			sBegin 
+			
+		}
+		
+	}
+	
+
 	@Override
 	protected void handleRead(InputBuf buf, int len) {
 		if (len > 0) {
@@ -245,6 +286,9 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 				case SKIP_CONTROL_CHARS: {
 					if (!buf.skipControlCharacters()) {
 						return;
+					}
+					if(this.request!=null){
+						
 					}
 					currentState = State.READ_INITIAL;
 				}
