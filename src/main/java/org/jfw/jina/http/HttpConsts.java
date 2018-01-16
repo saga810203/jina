@@ -428,5 +428,7 @@ public final class HttpConsts {
 	public static final String WEBSOCKET = "WebSocket";
 	public static final char CR = '\r';
 	public static final char LF = '\n';
+	
+	public static final String TEXT_HTML_UTF8 ="text/html; charset=utf-8";
 
 }

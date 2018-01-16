@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import org.jfw.jina.http.util.DateFormatter;
 import org.jfw.jina.util.common.Queue;
 import org.jfw.jina.util.common.Queue.Handler;
 import org.jfw.jina.util.common.Queue.Node;
@@ -130,4 +131,5 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 
 	}
 
+	public final DateFormatter dateFormatter = new DateFormatter();
 }

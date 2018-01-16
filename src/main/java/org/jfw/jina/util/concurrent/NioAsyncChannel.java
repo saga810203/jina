@@ -167,7 +167,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 					this.handleRead(EmptyBuf.INSTANCE, -1);
 					this.cleanOpRead();
 					return;
-				}else{
+				} else {
 					return;
 				}
 			} catch (ClosedChannelException e) {
@@ -230,12 +230,22 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 			node.item = buf;
 			node.tag = task;
 			outEnd.before(node);
-			this.setOpWrite();
+			this.doWrite();
 		} else {
 			if (task != null)
 				task.cancled(executor);
 			if (buf != null)
 				buf.release();
+		}
+	}
+
+	protected void write(InputBuf buf) {
+		if (this.javaChannel != null) {
+			LinkedNode node = executor.getNode();
+			node.item = buf;
+			node.tag = null;
+			outEnd.before(node);
+			doWrite();
 		}
 	}
 
@@ -255,10 +265,18 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 	protected void write(LinkedNode begin, LinkedNode end) {
 		if (this.javaChannel != null) {
 			outEnd.before(begin, end);
-			this.setOpWrite();
+			this.doWrite();
 		} else {
 			freeWriteList(begin, end);
 		}
+	}
+
+	private final void doWrite() {
+		final int interestOps = key.interestOps();
+		if ((interestOps & SelectionKey.OP_WRITE) != 0) {
+			return;
+		}
+		this.write();
 	}
 
 	@Override
@@ -285,26 +303,17 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 				if (buf.readable()) {
 					buf = null;
 					node = null;
+					this.setOpWrite();
 					return;
-				} else {
-					outHead.next = node.next;
-					executor.releaseSingle(node);
-					buf.release();
-					buf = null;
-					node = null;
-					if (task != null) {
-						task.completed(executor);
-					}
 				}
-			} else {
-				outHead.next = node.next;
-				executor.releaseSingle(node);
-				buf.release();
-				buf = null;
-				node = null;
-				if (task != null) {
-					task.completed(executor);
-				}
+			}
+			outHead.next = node.next;
+			executor.releaseSingle(node);
+			buf.release();
+			buf = null;
+			node = null;
+			if (task != null) {
+				task.completed(executor);
 			}
 		}
 	}

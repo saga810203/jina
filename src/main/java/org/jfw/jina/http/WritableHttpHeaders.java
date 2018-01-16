@@ -1,6 +1,9 @@
 package org.jfw.jina.http;
 
 public interface WritableHttpHeaders extends HttpHeaders {
-	String setHeader(String name,String value);
-	String removeHeader(String name);
+	WritableHttpHeaders set(String name,String value);
+	WritableHttpHeaders add(String name,String value);
+	WritableHttpHeaders remove(String name,String value);
+	WritableHttpHeaders remove(String name);
+	WritableHttpHeaders clear();
 }

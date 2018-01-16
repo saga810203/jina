@@ -17,10 +17,11 @@ public interface HttpRequest {
 	String hash();
 	HttpHeaders headers();
 	HttpParameters parameters();	
-	void setBodyBuilder(HttpRequestBodyBuilder builder);
-	public interface HttpRequestBodyBuilder{
+	void setBodyBuilder(RequestExecutor builder);
+	public interface RequestExecutor{
+		void setAsyncExecutor(HttpAsyncExecutor executor);
 		void begin(HttpRequest request,WritableHttpParameters parameters) ;
-		void handleBody(HttpRequest request,InputBuf buf);
+		void appendRequestBody(HttpRequest request,InputBuf buf);
 		void end(HttpRequest request,HttpResponse response,boolean validBody);
 	}
 }
