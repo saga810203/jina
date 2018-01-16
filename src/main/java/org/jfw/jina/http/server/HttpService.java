@@ -22,7 +22,6 @@ public class HttpService {
 		@Override
 		public void end(HttpRequest request, HttpResponse response, boolean validBody) {
 			if (validBody) {
-				response.setStatus(200);
 				response.addHeader(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 				response.addHeader(HttpConsts.CONTENT_TYPE, CONTENT_TYPE_HTML);
 				response.addHeader(HttpConsts.DATE,executor.dateFormatter.httpDateHeader());
@@ -36,29 +35,10 @@ public class HttpService {
 					}
 					response.addHeader(HttpConsts.CONTENT_LENGTH, Long.toString(bs.length));
 					buf.writeBytes(bs);
-					response.addBody(buf.input());
+					response.flush(buf.input(),null);
 				} finally {
 					buf.release();
 				}
-				response.flush(new AsyncTask() {
-					@Override
-					public void failed(Throwable exc, AsyncExecutor executor) {
-					}
-
-					@Override
-					public void execute(AsyncExecutor executor) throws Throwable {
-					}
-
-					@Override
-					public void completed(AsyncExecutor executor) {
-
-					}
-
-					@Override
-					public void cancled(AsyncExecutor executor) {
-					}
-				});
-				buf.release();
 			} else {
 				// Clear resource
 			}
