@@ -91,7 +91,7 @@ public final class DateFormatter {
 	private String lastHttpHeaderDate = null;
 	private long lastHttpHeaderDataValue = 0;
 
-	public String httpDateHeader() {
+	public String httpDateHeaderValue() {
 		long v = System.currentTimeMillis();
 		long vs = v / 1000;
 		if (vs != lastHttpHeaderDataValue) {

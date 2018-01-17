@@ -1,7 +1,5 @@
 package org.jfw.jina.http;
 
-import java.nio.charset.Charset;
-
 import org.jfw.jina.util.StringUtil;
 
 public class HttpResponseStatus {
@@ -9,10 +7,6 @@ public class HttpResponseStatus {
 	private final byte[] reason;
 	private final boolean keepAlive;
 	private final byte[] defautContent;
-
-	private static Charset UTF8 = Charset.forName("UTF-8");
-
-
 
 	private HttpResponseStatus(int code, String reason, boolean keepAlive, byte[] defaultContent) {
 		assert code > 99 && code < 600 && reason != null && reason.length() > 0;
@@ -268,12 +262,17 @@ public class HttpResponseStatus {
 	/**
 	 * 429 Too Many Requests (RFC6585)
 	 */
-	public static final HttpResponseStatus TOO_MANY_REQUESTS = new HttpResponseStatus(429, "Too Many Requests");
+	public static final HttpResponseStatus TOO_MANY_REQUESTS = new HttpResponseStatus(429, "Too Many Requests",false);
 
 	/**
 	 * 431 Request Header Fields Too Large (RFC6585)
 	 */
-	public static final HttpResponseStatus REQUEST_HEADER_FIELDS_TOO_LARGE = new HttpResponseStatus(431, "Request Header Fields Too Large");
+	public static final HttpResponseStatus REQUEST_HEADER_FIELDS_TOO_LARGE = new HttpResponseStatus(431, "Request Header Fields Too Large",false);
+	
+	public static final HttpResponseStatus REQUEST_INVALID_CONTENT_LENGTH = new HttpResponseStatus(481, "Request Content-Length Not Integer",false);
+	public static final HttpResponseStatus REQUEST_INVALID_CHUNKED_SIZE = new HttpResponseStatus(482, "Request Invalid Chunked Size",false);
+	public static final HttpResponseStatus REQUEST_CLIENT_CLOSE = new HttpResponseStatus(483, "Request Client Closed",false);
+
 
 	/**
 	 * 500 Internal Server Error
