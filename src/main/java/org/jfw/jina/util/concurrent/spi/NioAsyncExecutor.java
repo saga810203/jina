@@ -66,7 +66,10 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 	
 	protected BufAllocator alloc;
 
-	public OutputBuf alloc(){
+	public BufAllocator alloc(){
+		return alloc;
+	}
+	public OutputBuf allocBuffer(){
 		return alloc.buffer();
 	}
 	private Selector openSelector() {

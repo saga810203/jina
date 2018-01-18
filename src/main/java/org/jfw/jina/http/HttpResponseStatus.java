@@ -29,9 +29,10 @@ public class HttpResponseStatus {
 		this.code = code;
 		this.reason = StringUtil.utf8(reason);
 		this.keepAlive = true;
-		if(code>399 && code < 500){
-			this.defautContent = StringUtil.utf8("<html><head><title>"+code+" "+reason+"</title></head><body bgcolor=\"white\"><center><h1>"+code +" "+reason +"</h1></center><hr><center>jina async server</center></body></html>");
-		}else {
+		if (code > 399 && code < 500) {
+			this.defautContent = StringUtil.utf8("<html><head><title>" + code + " " + reason + "</title></head><body bgcolor=\"white\"><center><h1>" + code
+					+ " " + reason + "</h1></center><hr><center>jina async server</center></body></html>");
+		} else {
 			this.defautContent = null;
 		}
 	}
@@ -40,14 +41,16 @@ public class HttpResponseStatus {
 		assert code > 99 && code < 600 && reason != null && reason.length() > 0;
 		this.code = code;
 		this.reason = StringUtil.utf8(reason);
-		if(code>399 && code < 500){
+		if (code > 399 && code < 500) {
 			this.keepAlive = false;
-			this.defautContent = StringUtil.utf8("<html><head><title>"+code+" "+reason+"</title></head><body bgcolor=\"white\"><center><h1>"+code +" "+reason +"</h1></center><hr><center>jina async server</center></body></html>");
-		}else {
+			this.defautContent = StringUtil.utf8("<html><head><title>" + code + " " + reason + "</title></head><body bgcolor=\"white\"><center><h1>" + code
+					+ " " + reason + "</h1></center><hr><center>jina async server</center></body></html>");
+		} else {
 			this.keepAlive = true;
 			this.defautContent = null;
 		}
 	}
+
 	public int getCode() {
 		return code;
 	}
@@ -70,6 +73,11 @@ public class HttpResponseStatus {
 		if (reason == null || reason.length == 0)
 			throw new IllegalArgumentException("error http response status reason");
 		return new HttpResponseStatus(code, reason, keepAlive, null);
+	}
+
+	public static String buildHtmlPage(HttpResponseStatus status, String pageContent) {
+		return "<html><head><title>" + status.code + " " + status.reason + "</title></head><body bgcolor=\"white\"><center><h1>" + status.code + " "
+				+ status.reason + "</h1></center><hr><center>" + StringUtil.html(pageContent) + "</center></body></html>";
 	}
 
 	public static final HttpResponseStatus CONTINUE = new HttpResponseStatus(100, "Continue");
@@ -133,7 +141,7 @@ public class HttpResponseStatus {
 	/**
 	 * 400 Bad Request
 	 */
-	public static final HttpResponseStatus BAD_REQUEST = new HttpResponseStatus(400, "Bad Request",false);
+	public static final HttpResponseStatus BAD_REQUEST = new HttpResponseStatus(400, "Bad Request", false);
 
 	/**
 	 * 401 Unauthorized
@@ -158,7 +166,7 @@ public class HttpResponseStatus {
 	/**
 	 * 405 Method Not Allowed
 	 */
-	public static final HttpResponseStatus METHOD_NOT_ALLOWED = new HttpResponseStatus(405, "Method Not Allowed",false);
+	public static final HttpResponseStatus METHOD_NOT_ALLOWED = new HttpResponseStatus(405, "Method Not Allowed", false);
 
 	/**
 	 * 406 Not Acceptable
@@ -188,7 +196,7 @@ public class HttpResponseStatus {
 	/**
 	 * 411 Length Required
 	 */
-	public static final HttpResponseStatus LENGTH_REQUIRED = new HttpResponseStatus(411, "Length Required",false);
+	public static final HttpResponseStatus LENGTH_REQUIRED = new HttpResponseStatus(411, "Length Required", false);
 
 	/**
 	 * 412 Precondition Failed
@@ -262,17 +270,16 @@ public class HttpResponseStatus {
 	/**
 	 * 429 Too Many Requests (RFC6585)
 	 */
-	public static final HttpResponseStatus TOO_MANY_REQUESTS = new HttpResponseStatus(429, "Too Many Requests",false);
+	public static final HttpResponseStatus TOO_MANY_REQUESTS = new HttpResponseStatus(429, "Too Many Requests", false);
 
 	/**
 	 * 431 Request Header Fields Too Large (RFC6585)
 	 */
-	public static final HttpResponseStatus REQUEST_HEADER_FIELDS_TOO_LARGE = new HttpResponseStatus(431, "Request Header Fields Too Large",false);
-	
-	public static final HttpResponseStatus REQUEST_INVALID_CONTENT_LENGTH = new HttpResponseStatus(481, "Request Content-Length Not Integer",false);
-	public static final HttpResponseStatus REQUEST_INVALID_CHUNKED_SIZE = new HttpResponseStatus(482, "Request Invalid Chunked Size",false);
-	public static final HttpResponseStatus REQUEST_CLIENT_CLOSE = new HttpResponseStatus(483, "Request Client Closed",false);
+	public static final HttpResponseStatus REQUEST_HEADER_FIELDS_TOO_LARGE = new HttpResponseStatus(431, "Request Header Fields Too Large", false);
 
+	public static final HttpResponseStatus REQUEST_INVALID_CONTENT_LENGTH = new HttpResponseStatus(481, "Request Content-Length Not Integer", false);
+	public static final HttpResponseStatus REQUEST_INVALID_CHUNKED_SIZE = new HttpResponseStatus(482, "Request Invalid Chunked Size", false);
+	public static final HttpResponseStatus REQUEST_CLIENT_CLOSE = new HttpResponseStatus(483, "Request Client Closed", false);
 
 	/**
 	 * 500 Internal Server Error

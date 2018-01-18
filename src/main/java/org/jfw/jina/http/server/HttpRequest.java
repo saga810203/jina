@@ -12,7 +12,7 @@ public interface HttpRequest {
 	String queryString();
 	String hash();
 	HttpHeaders headers();
-	void setBodyBuilder(RequestExecutor builder);
+	void setRequestExecutor(RequestExecutor builder);
 	public interface RequestExecutor{
 		void setAsyncExecutor(HttpAsyncExecutor executor);
 		void requestBody(HttpRequest request,InputBuf buf);

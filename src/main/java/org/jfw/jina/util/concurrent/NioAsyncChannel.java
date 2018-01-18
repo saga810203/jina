@@ -155,7 +155,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 	public final void read() {
 		int rc = 0;
 		for (;;) {
-			OutputBuf buf = executor.alloc();
+			OutputBuf buf = executor.allocBuffer();
 			try {
 				rc = buf.writeBytes(this.javaChannel);
 				if (rc > 0) {
@@ -186,11 +186,11 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		}
 	}
 
-	protected void handleWriteException(IOException e, InputBuf buf, AsyncTask task) {
-		if (task != null)
-			task.failed(e, executor);
-		this.closeJavaChannel();
-	}
+//	protected void handleWriteException(IOException e, InputBuf buf, AsyncTask task) {
+//		if (task != null)
+//			task.failed(e, executor);
+//		this.closeJavaChannel();
+//	}
 
 	protected final void setOpRead() {
 		assert this.key != null && this.key.isValid();
@@ -297,7 +297,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 				try {
 					buf.readBytes(this.javaChannel);
 				} catch (IOException e) {
-					this.handleWriteException(e, buf, task);
+					this.close();
 					return;
 				}
 				if (buf.readable()) {
@@ -340,7 +340,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(1)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeBoolean(value);
 		return buf;
@@ -350,7 +350,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(1)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeByte(value);
 		return buf;
@@ -360,7 +360,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(2)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeShort(value);
 		return buf;
@@ -370,7 +370,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(2)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeShortLE(value);
 		return buf;
@@ -380,7 +380,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(3)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeMedium(value);
 		return buf;
@@ -390,7 +390,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(3)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeMediumLE(value);
 		return buf;
@@ -399,7 +399,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(4)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeInt(value);
 		return buf;
@@ -408,7 +408,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(4)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeIntLE(value);
 		return buf;
@@ -418,7 +418,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(8)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeLong(value);
 		return buf;
@@ -428,7 +428,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(8)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeLongLE(value);
 		return buf;
@@ -437,7 +437,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 			if(!buf.writable(2)){
 				this.write(buf.input());
 				buf.release();
-				buf = executor.alloc();
+				buf = executor.allocBuffer();
 			}
 			buf.writeChar(value);
 			return buf;
@@ -446,7 +446,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(4)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeFloat(value);
 		return buf;
@@ -455,7 +455,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(4)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeFloatLE(value);
 		return buf;
@@ -464,7 +464,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(8)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeDouble(value);
 		return buf;
@@ -473,7 +473,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable(8)){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		buf.writeDouble(value);
 		return buf;
@@ -482,7 +482,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable()){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		while(length>0){
 			int canWriteCount  = buf.writableBytes();
@@ -492,7 +492,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 			    length-=canWriteCount;
 			    this.write(buf.input());
 			    buf.release();
-			    buf = executor.alloc();
+			    buf = executor.allocBuffer();
 			}else{
 				buf.writeBytes(src,srcIndex,length);
 				break;
@@ -505,7 +505,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 		if(!buf.writable()){
 			this.write(buf.input());
 			buf.release();
-			buf = executor.alloc();
+			buf = executor.allocBuffer();
 		}
 		int idx  = 0;
 		int len = src.length();
@@ -517,7 +517,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 			if(idx<len){
 				this.write(buf.input());
 				buf.release();
-				buf = executor.alloc();
+				buf = executor.allocBuffer();
 			}
 		}while(idx<len);
 		return buf;

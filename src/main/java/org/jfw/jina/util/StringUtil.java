@@ -57,6 +57,13 @@ public final class StringUtil {
 		return src.getBytes(UTF8);
 	}
 	
+	public static byte[] htmlUtf8(String src){
+		return src.getBytes(UTF8);
+	}
+	public static String html(String src){
+		return src;
+	}
+	
 	public static boolean equals(char[] src,int srcIndex,char[] dest,int destIndex, int length){
 		for(int i =0;i< length;++i){
 			if(src[srcIndex++] !=dest[destIndex++])

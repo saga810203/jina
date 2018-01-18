@@ -1,5 +1,7 @@
 package org.jfw.jina.http.server;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.channels.SocketChannel;
 
 import org.jfw.jina.buffer.ByteProcessor;
@@ -12,6 +14,7 @@ import org.jfw.jina.http.HttpResponseStatus;
 import org.jfw.jina.http.impl.DefaultHttpHeaders;
 import org.jfw.jina.http.impl.DefaultHttpParameters;
 import org.jfw.jina.http.server.HttpRequest.HttpMethod;
+import org.jfw.jina.http.server.HttpRequest.RequestExecutor;
 import org.jfw.jina.util.StringUtil;
 import org.jfw.jina.util.common.Queue;
 import org.jfw.jina.util.common.Queue.Node;
@@ -39,6 +42,8 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 	protected HttpServerResponse response = null;
 	protected LineParser lineParser = new LineParser(8192);
 
+	protected InputBuf cacheBuffer = null;
+
 	protected HttpService service = new HttpService();
 
 	public HttpChannel(HttpAsyncExecutor executor, SocketChannel javaChannel) {
@@ -49,6 +54,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 	protected void afterRegister() {
 		this.keepAliveQueue = this.executor.getKeepAliveQueue();
 		this.keepAliveTimeout = this.executor.getKeepAliveTimeout();
+		this.addKeepAliveCheck();
 	}
 
 	public HttpChannel(NioAsyncChannel<? extends HttpAsyncExecutor> channel) {
@@ -76,15 +82,34 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		this.keepAliveNode = this.keepAliveQueue.add(System.currentTimeMillis() + this.keepAliveTimeout);
 	}
 
+	protected void beginRead() {
+		this.setOpRead();
+		this.addKeepAliveCheck();
+		if (this.cacheBuffer != null) {
+			InputBuf buf = cacheBuffer;
+			cacheBuffer = null;
+			this.handleRead(buf, buf.readableBytes());
+			buf.release();
+		}
+	}
+	protected void endRead(InputBuf buf){
+		if(buf.readable()){
+			this.cacheBuffer = buf.retain();
+		}
+	}
+
 	@Override
 	public void close() {
+		if (this.cacheBuffer != null) {
+			this.cacheBuffer.release();
+			this.cacheBuffer = null;
+		}
 		this.closeJavaChannel();
 	}
 
 	@Override
 	public void connected() {
 		throw new UnsupportedOperationException();
-
 	}
 
 	private String hName;
@@ -174,7 +199,8 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 			} else if (cl >= 0) {
 				nextState = State.READ_FIXED_LENGTH_CONTENT;
 			} else {
-				nextState = State.READ_VARIABLE_LENGTH_CONTENT;
+				this.response.requestKeepAlive = false;
+				return State.READ_VARIABLE_LENGTH_CONTENT;
 			}
 		}
 		this.request.doAfterHeaderParse();
@@ -222,7 +248,8 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		this.contentLength = Long.MAX_VALUE;
 		this.chunkSize = Long.MAX_VALUE;
 		this.currentState = State.READ_FIXED_LENGTH_CONTENT;
-		OutputBuf buf = executor.alloc();
+		this.setOpRead();
+		OutputBuf buf = executor.allocBuffer();
 		byte[] bs = error.getReason();
 		buf = this.writeAscii(buf, "HTTP/1.1 " + error.getCode() + ' ');
 		buf = this.writeBytes(buf, bs, 0, bs.length);
@@ -368,114 +395,166 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		}
 	}
 
+	protected void configRequest() {
+		try {
+			service.service(request);
+			request.requestExecutor.setAsyncExecutor(executor);
+		} catch (Throwable e) {
+			handleInternalException(e);
+		}
+	}
+
+	protected void requestBodyRead(InputBuf ibuf) {
+		try {
+			request.requestExecutor.requestBody(this.request, ibuf);
+		} catch (Throwable e) {
+			handleInternalException(e);
+		}
+	}
+
+	protected void requestInvoke() {
+		try {
+			request.requestExecutor.execute(this.request, response);
+		} catch (Throwable e) {
+			if (response.state == HttpResponse.STATE_INIT) {
+				handleInternalException(e);
+				IGRONE_EXECUTOR.execute(request, response);
+			} else {
+				this.close();
+				return;
+			}
+		}
+		this.resetRequest();
+	}
+
+	protected void handleInternalException(Throwable e) {
+		byte[] buf = null;
+		StringWriter sw = new StringWriter();
+		PrintWriter pw = new PrintWriter(sw);
+		e.printStackTrace(pw);
+		buf = StringUtil.utf8(HttpResponseStatus.buildHtmlPage(HttpResponseStatus.INTERNAL_SERVER_ERROR, sw.toString()));
+		response.setStatus(HttpResponseStatus.INTERNAL_SERVER_ERROR);
+		response.addHeader(HttpConsts.CONTENT_LENGTH, Integer.toString(buf.length));
+		OutputBuf buffer = this.writeBytes(executor.allocBuffer(), buf, 0, buf.length);
+		this.write(buffer.input());
+		buffer.release();
+		request.setRequestExecutor(IGRONE_EXECUTOR);
+	}
+
 	@Override
 	protected void handleRead(InputBuf buf, int len) {
+		this.removeKeepAliveCheck();
 		State nextState = null;
 		if (len > 0) {
 			for (;;) {
 				switch (currentState) {
-				case SKIP_CONTROL_CHARS: {
-					if (!buf.skipControlCharacters()) {
+					case SKIP_CONTROL_CHARS: {
+						if (!buf.skipControlCharacters()) {
+							return;
+						}
+						if (this.request != null) {
+							this.handleInvalidHttpresutst(HttpResponseStatus.TOO_MANY_REQUESTS);
+							return;
+						}
+						currentState = State.READ_INITIAL;
+					}
+					case READ_INITIAL: {
+						nextState = this.readRequestLine(buf);
+						if (nextState == null) {
+							return;
+						}
+					}
+					case READ_HEADER: {
+						nextState = readHeaders(buf);
+						if (nextState == null) {
+							return;
+						}
+						currentState = nextState;
+						if (nextState == State.READ_FIXED_LENGTH_CONTENT) {
+							chunkSize = contentLength;
+						}
+						this.configRequest();
+					}
+					case READ_VARIABLE_LENGTH_CONTENT: {
+						if (buf.readable()) {
+							this.requestBodyRead(buf);
+						}
 						return;
 					}
-					if (this.request != null) {
-						this.handleInvalidHttpresutst(HttpResponseStatus.TOO_MANY_REQUESTS);
-						return;
+					case READ_FIXED_LENGTH_CONTENT: {
+						if (chunkSize == 0) {
+							if (buf.readable()) {
+								this.cacheBuffer = buf.retain();
+							}
+							this.requestInvoke();
+							return;
+						} else {
+							long nr = buf.readableBytes();
+							if (nr > chunkSize) {
+								InputBuf dbuf = buf.duplicate((int) chunkSize);
+								this.requestBodyRead(dbuf);
+								dbuf.release();
+								buf.skipBytes((int) chunkSize);
+								this.requestInvoke();
+								this.cacheBuffer = buf.retain();
+								return;
+							} else {
+								this.request.requestExecutor.requestBody(request, buf);
+								chunkSize -= nr;
+							}
+						}
 					}
-					currentState = State.READ_INITIAL;
-				}
-				case READ_INITIAL: {
-					nextState = this.readRequestLine(buf);
-					if (nextState == null) {
-						return;
+					case READ_CHUNK_SIZE: {
+						int lineSize = lineParser.parseLine(buf);
+						if (lineSize < 0) {
+							return;
+						} else if (lineSize >= lineParser.maxLength) {
+							this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
+							return;
+						}
+						this.chunkSize = lineParser.getChunkSize(lineSize);
+						if (chunkSize == Integer.MIN_VALUE) {
+							this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
+							return;
+						}
+						if (chunkSize == 0) {
+							if (buf.readable()) {
+								this.cacheBuffer = buf.retain();
+							}
+							this.requestInvoke();
+						} else {
+							currentState = State.READ_CHUNKED_CONTENT;
+						}
 					}
-				}
-				case READ_HEADER: {
-					nextState = readHeaders(buf);
-					if (nextState == null) {
-						return;
-					}
-					currentState = nextState;
-					if (nextState == State.READ_FIXED_LENGTH_CONTENT) {
-						chunkSize = contentLength;
-					}
-					service.service(request);
-				}
-				case READ_VARIABLE_LENGTH_CONTENT: {
-					if (buf.readable()) {
-						request.requestExecutor.requestBody(request, buf);
-					}
-					return;
-				}
-				case READ_FIXED_LENGTH_CONTENT: {
-					if (chunkSize == 0) {
-						this.request.requestExecutor.execute(request, response);
-						this.resetRequest();
-					} else {
+					case READ_CHUNKED_CONTENT: {
+						assert chunkSize <= Integer.MAX_VALUE;
 						long nr = buf.readableBytes();
 						if (nr > chunkSize) {
 							InputBuf dbuf = buf.duplicate((int) chunkSize);
-							this.request.requestExecutor.requestBody(request, dbuf);
+							this.requestBodyRead(dbuf);
 							dbuf.release();
 							buf.skipBytes((int) chunkSize);
-							this.request.requestExecutor.execute(request, response);
-							this.resetRequest();
-						} else {
-							this.request.requestExecutor.requestBody(request, buf);
+							this.currentState = State.READ_CHUNK_DELIMITER;
+						} else if (nr > 0) {
+							this.requestBodyRead(buf);
 							chunkSize -= nr;
+							if (chunkSize == 0) {
+								this.currentState = State.READ_CHUNK_DELIMITER;
+								return;
+							}
 						}
 					}
-				}
-				case READ_CHUNK_SIZE: {
-					int lineSize = lineParser.parseLine(buf);
-					if (lineSize < 0) {
-						return;
-					} else if (lineSize >= lineParser.maxLength) {
-						this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
-						return;
-					}
-					this.chunkSize = lineParser.getChunkSize(lineSize);
-					if (chunkSize == Integer.MIN_VALUE) {
-						this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
-						return;
-					}
-					if (chunkSize == 0) {
-						this.request.requestExecutor.execute(request, response);
-						this.resetRequest();
-					} else {
-						currentState = State.READ_CHUNKED_CONTENT;
-					}
-				}
-				case READ_CHUNKED_CONTENT: {
-					assert chunkSize <= Integer.MAX_VALUE;
-					long nr = buf.readableBytes();
-					if (nr > chunkSize) {
-						InputBuf dbuf = buf.duplicate((int) chunkSize);
-						this.request.requestExecutor.requestBody(request, dbuf);
-						dbuf.release();
-						buf.skipBytes((int) chunkSize);
-						this.currentState = State.READ_CHUNK_DELIMITER;
-					} else if (nr > 0) {
-						this.request.requestExecutor.requestBody(request, buf);
-						chunkSize -= nr;
-						if (chunkSize == 0) {
-							this.currentState = State.READ_CHUNK_DELIMITER;
+					case READ_CHUNK_DELIMITER: {
+						while (buf.readable()) {
+							if (buf.readByte() == 10) {
+								currentState = State.READ_CHUNK_SIZE;
+								break;
+							}
+						}
+						if (currentState == State.READ_CHUNK_DELIMITER) {
 							return;
 						}
-
 					}
-				}
-				case READ_CHUNK_DELIMITER: {
-					while (buf.readable()) {
-						if (buf.readByte() == 10) {
-							currentState = State.READ_CHUNK_SIZE;
-							break;
-						}
-					}
-					if (currentState == State.READ_CHUNK_DELIMITER) {
-						return;
-					}
-				}
 				}
 			}
 		} else {
@@ -485,24 +564,24 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 
 	protected void handleCloseInput() {
 		switch (currentState) {
-		case SKIP_CONTROL_CHARS: {
-			this.write(EmptyBuf.INSTANCE, closeTask);
-		}
-		case READ_INITIAL: {
-			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
-		}
-		case READ_HEADER: {
-			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
-		}
-		case READ_VARIABLE_LENGTH_CONTENT: {
-			this.request.requestExecutor.execute(request, response);
-		}
-		case READ_FIXED_LENGTH_CONTENT:
-		case READ_CHUNK_SIZE:
-		case READ_CHUNKED_CONTENT:
-		case READ_CHUNK_DELIMITER: {
-			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
-		}
+			case SKIP_CONTROL_CHARS: {
+				this.write(EmptyBuf.INSTANCE, closeTask);
+			}
+			case READ_INITIAL: {
+				this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
+			}
+			case READ_HEADER: {
+				this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
+			}
+			case READ_VARIABLE_LENGTH_CONTENT: {
+				this.requestInvoke();
+			}
+			case READ_FIXED_LENGTH_CONTENT:
+			case READ_CHUNK_SIZE:
+			case READ_CHUNKED_CONTENT:
+			case READ_CHUNK_DELIMITER: {
+				this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
+			}
 		}
 	}
 
@@ -639,7 +718,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		}
 
 		@Override
-		public void setBodyBuilder(RequestExecutor builder) {
+		public void setRequestExecutor(RequestExecutor builder) {
 			this.requestExecutor = builder;
 		}
 
@@ -669,7 +748,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 				this.headers.set(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			}
 			byte[] bs = hrs.getDefautContent();
-			OutputBuf buf = executor.alloc();
+			OutputBuf buf = executor.allocBuffer();
 			buf = writeAscii(buf, "HTTP/1.1 " + hrs.getCode() + ' ');
 			buf = writeBytes(buf, bs, 0, bs.length);
 			buf = writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
@@ -699,7 +778,25 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 
 		@Override
 		public void flush(InputBuf buf, AsyncTask task) {
-			write(buf, new ResponseCloseTask(this.requestKeepAlive && this.hrs.isKeepAlive(), task));
+			if (state == STATE_INIT) {
+				OutputBuf obuf = this.sendResponseLineAndHeader();
+				write(obuf.input());
+				obuf.release();
+
+			} else if (state == STATE_SENDED) {
+				throw new IllegalStateException();
+			}
+			if (task == null) {
+				task = (this.requestKeepAlive && this.hrs.isKeepAlive()) ? beginRead : closeTask;
+			} else {
+				task = new ResponseCloseTask(this.requestKeepAlive && this.hrs.isKeepAlive(), task);
+			}
+			if (buf.readable()) {
+				write(buf, task);
+			} else {
+				buf.release();
+				write(EmptyBuf.INSTANCE, task);
+			}
 		}
 
 		@Override
@@ -743,7 +840,6 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		public int state() {
 			return this.state;
 		}
-
 	}
 
 	public void keepAliveTimeout() {
@@ -816,8 +912,9 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 
 		@Override
 		public void completed(AsyncExecutor executor) {
-			setOpRead();
-			addKeepAliveCheck();
+			
+			beginRead();
+
 		}
 
 		@Override
@@ -826,6 +923,28 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 
 		@Override
 		public void cancled(AsyncExecutor executor) {
+		}
+	};
+
+	protected final RequestExecutor IGRONE_EXECUTOR = new RequestExecutor() {
+		public void setAsyncExecutor(HttpAsyncExecutor executor) {
+		}
+
+		@Override
+		public void requestBody(HttpRequest request, InputBuf buf) {
+		}
+
+		@Override
+		public void execute(HttpRequest request, HttpResponse response) {
+			if (((HttpServerResponse) response).requestKeepAlive) {
+				write(EmptyBuf.INSTANCE, beginRead);
+			} else {
+				write(EmptyBuf.INSTANCE, closeTask);
+			}
+		}
+
+		@Override
+		public void error(HttpRequest request, int code) {
 		}
 	};
 }

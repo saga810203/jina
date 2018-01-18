@@ -435,5 +435,4 @@ public class DirectInputBuf implements InputBuf {
 		++wrap.refCnt;
 		return new SliceInputBuf(wrap,pos, this.limit-length);
 	}
-
 }

@@ -4,6 +4,7 @@ import java.nio.ByteBuffer;
 
 import org.jfw.jina.buffer.BufAllocator;
 import org.jfw.jina.buffer.OutputBuf;
+import org.jfw.jina.core.Relier;
 import org.jfw.jina.util.concurrent.AsyncExecutor;
 import org.jfw.jina.util.concurrent.spi.AbstractAsyncExecutor;
 
@@ -60,19 +61,8 @@ public class DirectAllocator implements BufAllocator {
 		return new CompositeOutputBuf(this.buffer());
 	}
 
-
 	@Override
-	public byte[] swap() {
-		assert executor.inLoop() && null!= this.swap;
-		byte[] ret = this.swap;
-		this.swap =null;
-		return ret;
+	public void support(Relier<byte[]> relier) {
+		relier.use(this.swap);
 	}
-
-	@Override
-	public void swap(byte[] buf) {
-		assert executor.inLoop() && null!=buf && null== this.swap;
-		this.swap = buf;		
-	}
-
 }

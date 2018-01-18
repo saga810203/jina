@@ -5,7 +5,6 @@ import java.io.UnsupportedEncodingException;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.http.HttpConsts;
-import org.jfw.jina.http.WritableHttpParameters;
 import org.jfw.jina.http.server.HttpRequest.RequestExecutor;
 
 public class HttpService {
@@ -22,7 +21,7 @@ public class HttpService {
 				response.addHeader(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 				response.addHeader(HttpConsts.CONTENT_TYPE, CONTENT_TYPE_HTML);
 				response.addHeader(HttpConsts.DATE,executor.dateFormatter.httpDateHeaderValue());
-				OutputBuf buf =executor.alloc();
+				OutputBuf buf =executor.allocBuffer();
 				try {
 					byte[] bs = null;
 					try {
@@ -51,6 +50,6 @@ public class HttpService {
 	};
 
 	public void service(HttpRequest request) {
-		request.setBodyBuilder(builder);
+		request.setRequestExecutor(builder);
 	}
 }
