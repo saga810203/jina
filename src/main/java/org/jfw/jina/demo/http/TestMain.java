@@ -52,13 +52,32 @@ public class TestMain {
 		// writeMap(map);
 
 		// System.out.println(HttpRequest.HttpMethod.GET.toString());
-		String c = "GET /test.html HTTP/1.1\r\n" + "Accept	:text/html,application/xhtml+xm…plication/xml;q=0.9,*/*;q=0.8\r\n"
-				+ "Accept-Encoding:gzip, deflate\r\n" + "Accept-Language:zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2\r\n"
-				+ "Cache-Control:max-age=0\r\n" + "Host:192.168.3.233\r\n" + "User-Agent:Mozilla/5.0 (Windows NT 6.1; W…) Gecko/20100101 Firefox/57.0\r\n"
-				+ "\r\n";
-		testSocket(c);
+//		String c = "GET /test.html HTTP/1.1\r\n" + "Accept	:text/html,application/xhtml+xm…plication/xml;q=0.9,*/*;q=0.8\r\n"
+//				+ "Accept-Encoding:gzip, deflate\r\n" + "Accept-Language:zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2\r\n"
+//				+ "Cache-Control:max-age=0\r\n" + "Host:192.168.3.233\r\n" + "User-Agent:Mozilla/5.0 (Windows NT 6.1; W…) Gecko/20100101 Firefox/57.0\r\n"
+//				+ "\r\n";
+//		testSocket(c);
+//		ExecThread t = new ExecThread();
+//		t.start();
+//		Thread.sleep(10000);
+		
+		
+
+		
 	}
 
+	public static class ExecThread extends Thread{
+		private int v =1243;
+
+		@Override
+		public void run() {
+			Thread thread = Thread.currentThread();
+			System.out.println(thread.getClass().getName());
+		}
+		
+		
+	}
+	
 	public static void countTime(Map<Object, Integer> map, Object key) {
 		Integer v = map.get(key);
 		if (v == null) {

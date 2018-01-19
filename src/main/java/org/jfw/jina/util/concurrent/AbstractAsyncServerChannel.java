@@ -9,6 +9,8 @@ import java.nio.channels.SocketChannel;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
+import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.util.concurrent.spi.NioAsyncExecutor;
 
 public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {

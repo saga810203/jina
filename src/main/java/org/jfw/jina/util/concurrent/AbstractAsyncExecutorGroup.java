@@ -7,6 +7,9 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.impl.ProxyAsyncExecutor;
+
 public abstract class AbstractAsyncExecutorGroup implements AsyncExecutorGroup {
 	private final AsyncExecutor[] children;
 	private final Set<AsyncExecutor> readonlyChildren;
@@ -16,7 +19,7 @@ public abstract class AbstractAsyncExecutorGroup implements AsyncExecutorGroup {
 	private final AtomicInteger idx = new AtomicInteger();
 	private final int idxPapam;
 
-	private final Runnable childCloseTask = new Runnable() {
+	protected final Runnable childCloseTask = new Runnable() {
 		public void run() {
 			if (terminatedChildren.decrementAndGet() == 0) {
 				downLatch.countDown();
@@ -59,7 +62,7 @@ public abstract class AbstractAsyncExecutorGroup implements AsyncExecutorGroup {
 		for (int i = 0; i < nThreads; i++) {
 			boolean success = false;
 			try {
-				children[i] = newChild(this.childCloseTask);
+				children[i] = new ProxyAsyncExecutor(children, i,this);
 				success = true;
 			} catch (Exception e) {
 				throw new IllegalStateException("failed to create a child event loop", e);
@@ -105,7 +108,7 @@ public abstract class AbstractAsyncExecutorGroup implements AsyncExecutorGroup {
 		}
 	}
 
-	protected abstract AsyncExecutor newChild(Runnable closeTask);
+	public abstract AsyncExecutor newChild(int idx);
 
 	interface EventExecutorChooser {
 		AsyncExecutor next();

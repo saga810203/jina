@@ -8,6 +8,8 @@ import java.nio.channels.SocketChannel;
 import org.jfw.jina.buffer.EmptyBuf;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
+import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.util.concurrent.spi.AbstractAsyncExecutor.LinkedNode;
 import org.jfw.jina.util.concurrent.spi.NioAsyncExecutor;
 

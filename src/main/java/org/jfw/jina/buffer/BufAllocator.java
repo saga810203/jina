@@ -1,7 +1,7 @@
 package org.jfw.jina.buffer;
 
+import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.Relier;
-import org.jfw.jina.util.concurrent.AsyncExecutor;
 
 public interface BufAllocator {
 	    OutputBuf buffer();

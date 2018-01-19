@@ -1,5 +1,6 @@
 package org.jfw.jina.util.concurrent.spi;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -7,16 +8,19 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncTask;
+import org.jfw.jina.core.impl.ProxyAsyncExecutor;
+import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.common.Queue;
 import org.jfw.jina.util.common.Queue.Handler;
 import org.jfw.jina.util.common.Queue.Matcher;
 import org.jfw.jina.util.common.Queue.Node;
-import org.jfw.jina.util.concurrent.AsyncExecutor;
 import org.jfw.jina.util.concurrent.AsyncExecutorGroup;
-import org.jfw.jina.util.concurrent.AsyncTask;
 import org.jfw.jina.util.concurrent.SystemPropertyUtil;
+import org.jfw.jina.util.impl.QueueProviderImpl;
 
-public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
+public abstract class AbstractAsyncExecutor extends QueueProviderImpl implements AsyncExecutor, Runnable {
 	public static final long START_TIME = System.nanoTime();
 	public static final int ST_NOT_STARTED = 1;
 	public static final int ST_STARTED = 2;
@@ -32,17 +36,32 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 	protected volatile Thread thread;
 	protected volatile int state = ST_NOT_STARTED;
 
-	protected Map<Object, Object> objCache = new HashMap<Object, Object>();
-	protected LinkedQueue runningTasks = new LinkedQueue();
-	private LinkedQueue waitTasks = new LinkedQueue();
-	private LinkedQueue delayTasks = new LinkedQueue();
-	private LinkedQueue syncTasks = new LinkedQueue();
+	protected ArrayList<Object> objCache = new ArrayList<Object>();
+
+	protected Queue runningTasks = null;
+	private Queue waitTasks = null;
+	private TagQueue delayTasks =null;
+	private Queue syncTasks = null;
 
 	public AbstractAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask) {
 		assert null != group;
 		assert null != closeTask;
 		this.group = group;
 		this.closeTask = closeTask;
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public <T> T get(int idx) {
+		assert this.inLoop();
+		return (T) objCache.get(idx);
+	}
+
+	@Override
+	public int set(Object val) {
+		assert inLoop();
+		objCache.add(val);
+		return objCache.indexOf(val);
 	}
 
 	public AsyncExecutorGroup group() {
@@ -161,23 +180,24 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 
 	protected abstract void wakeup();
 
-	@SuppressWarnings("unchecked")
-	@Override
-	public <T> T getObject(Object key) {
-		return (T) objCache.get(key);
-	}
 
-	public void setObject(Object key, Object val) {
-		assert this.inLoop();
-		assert objCache.get(key) == null;
-		this.objCache.put(key, val);
-	}
 
+	private void createLocalVar(){
+	 runningTasks = this.newQueue();
+	 waitTasks = this.newQueue();
+	 delayTasks =this.newTagQueue();
+	 syncTasks =this.newQueue();
+	}
+	
+	
 	@Override
 	public final void run() {
 		try {
 			thread = Thread.currentThread();
-			((ExecutorThread) thread).executor = this;
+			((ProxyAsyncExecutor) thread).setExecutor(this);
+
+			this.createLocalVar();
+			
 			for (AsyncTask task : pendingTasks()) {
 				try {
 					task.execute(this);
@@ -366,8 +386,9 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			hPNode.next = node;
 		}
 	}
-	public void releaseSingle(LinkedNode node){
-		
+
+	public void releaseSingle(LinkedNode node) {
+
 	}
 
 	public Queue newQueue() {
@@ -378,7 +399,6 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 		private final LinkedNode head;
 		private final LinkedNode tail;
 
-		
 		@Override
 		public boolean isEmpty() {
 			return head.next == tail;
@@ -583,8 +603,6 @@ public abstract class AbstractAsyncExecutor implements AsyncExecutor, Runnable {
 			node.next = this;
 			this.prev = ob;
 		}
-		
-		
 
 		public void after(LinkedNode node) {
 			LinkedNode oa = this.next;

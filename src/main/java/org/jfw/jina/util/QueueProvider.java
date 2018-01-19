@@ -1,25 +1,11 @@
 package org.jfw.jina.util;
 
-import org.jfw.jina.util.concurrent.SystemPropertyUtil;
+import org.jfw.jina.util.DQueue.DNode;
 
-public class QueueProvider {
-
-	private static final int MAX_NUM_POOLED_NODE = SystemPropertyUtil.getInt("org.jfw.jina.util.QueueProvider.MAX_NUM_POOLED_NODE",1024 * 1024);
-	private int numNode = 0;
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	public static LinkedNode im 
-	
-	
+public interface QueueProvider {
+	DNode newDNode(Object item);
+	void freeDNode(DNode node);
+	Queue newQueue();
+	DQueue newDQueue();
+	TagQueue newTagQueue();
 }

@@ -8,6 +8,8 @@ import org.jfw.jina.buffer.ByteProcessor;
 import org.jfw.jina.buffer.EmptyBuf;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
+import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.http.HttpConsts;
 import org.jfw.jina.http.HttpHeaders;
 import org.jfw.jina.http.HttpResponseStatus;
@@ -18,8 +20,6 @@ import org.jfw.jina.http.server.HttpRequest.RequestExecutor;
 import org.jfw.jina.util.StringUtil;
 import org.jfw.jina.util.common.Queue;
 import org.jfw.jina.util.common.Queue.Node;
-import org.jfw.jina.util.concurrent.AsyncExecutor;
-import org.jfw.jina.util.concurrent.AsyncTask;
 import org.jfw.jina.util.concurrent.NioAsyncChannel;
 
 public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {

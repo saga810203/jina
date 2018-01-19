@@ -1,8 +1,8 @@
 package org.jfw.jina.http.server;
 
 import org.jfw.jina.buffer.InputBuf;
+import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.http.HttpResponseStatus;
-import org.jfw.jina.util.concurrent.AsyncTask;
 
 public interface HttpResponse {
 	public static final int STATE_INIT = 5;

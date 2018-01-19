@@ -1,5 +1,5 @@
 package org.jfw.jina.util;
 
-public interface Matcher {
-	boolean match(Object item);
+public interface Matcher<T> {
+	boolean match(T item);
 }

@@ -4,8 +4,8 @@ import java.nio.channels.spi.SelectorProvider;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.util.concurrent.AbstractAsyncExecutorGroup;
-import org.jfw.jina.util.concurrent.AsyncExecutor;
 
 public class NioAsyncExecutorGroup extends AbstractAsyncExecutorGroup {
 	 private static final int DEFAULT_EVENT_LOOP_THREADS;

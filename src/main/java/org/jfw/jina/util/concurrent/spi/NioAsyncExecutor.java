@@ -18,11 +18,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jfw.jina.buffer.BufAllocator;
 import org.jfw.jina.buffer.OutputBuf;
+import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.util.ReflectionUtil;
 import org.jfw.jina.util.concurrent.AsyncChannel;
-import org.jfw.jina.util.concurrent.AsyncExecutor;
 import org.jfw.jina.util.concurrent.AsyncExecutorGroup;
-import org.jfw.jina.util.concurrent.AsyncTask;
 import org.jfw.jina.util.concurrent.SystemPropertyUtil;
 
 public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable {

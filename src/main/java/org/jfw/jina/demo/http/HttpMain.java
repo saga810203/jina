@@ -5,9 +5,9 @@ import java.nio.channels.spi.SelectorProvider;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.http.server.HttpAsyncExecutor;
 import org.jfw.jina.util.concurrent.AbstractAsyncServerChannel;
-import org.jfw.jina.util.concurrent.AsyncExecutor;
 import org.jfw.jina.util.concurrent.spi.NioAsyncExecutorGroup;
 
 public class HttpMain {
