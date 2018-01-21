@@ -1,4 +1,4 @@
-package org.jfw.jina.util.concurrent;
+package org.jfw.jina.core.impl;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -10,10 +10,13 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
+import org.jfw.jina.util.concurrent.SystemPropertyUtil;
 import org.jfw.jina.util.concurrent.spi.NioAsyncExecutor;
 
 public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
+	@SuppressWarnings("rawtypes")
 	private static final AtomicIntegerFieldUpdater STATE_UPDATER = AtomicIntegerFieldUpdater.newUpdater(AbstractAsyncServerChannel.class, "state");
 	private static final int STATE_INIT = 0;
 	private static final int STATE_STARTING = 1;
@@ -24,7 +27,7 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 	@SuppressWarnings("unused")
 	private int state = STATE_INIT;
 	protected ServerSocketChannel javaChannel;
-	private final AsyncExecutorGroup group;
+	private final  AsyncExecutorGroup group;
 	private final AsyncExecutorGroup childGroup;
 	@SuppressWarnings("unused")
 	private SelectionKey selectionKey;
@@ -54,8 +57,10 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 
 	@Override
 	public void setSelectionKey(SelectionKey key) {
+		this.selectionKey = key;
 	}
 
+	@SuppressWarnings("unchecked")
 	@Override
 	public void close() {
 		if (STATE_UPDATER.compareAndSet(this, STATE_STARTED, STATE_STOPED)) {

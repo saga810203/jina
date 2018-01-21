@@ -9,10 +9,10 @@ import org.jfw.jina.buffer.OutputBuf;
 
 class CompositeOutputBuf implements OutputBuf {
 	private long size;
-	private final DirectByteOutputBuf first;
-	private DirectByteOutputBuf cur;
+	private final DirectOutputBuf first;
+	private DirectOutputBuf cur;
 
-	public CompositeOutputBuf(DirectByteOutputBuf first) {
+	public CompositeOutputBuf(DirectOutputBuf first) {
 		this.first = first;
 		this.cur = first;
 		this.size = 0;
@@ -39,7 +39,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable()) {
 			cur.writeBoolean(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeBoolean(value);
 			cur.next = nd;
 			cur = nd;
@@ -54,7 +54,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable()) {
 			cur.writeByte(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeByte(value);
 			cur.next = nd;
 			cur = nd;
@@ -69,7 +69,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(2)) {
 			cur.writeShort(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeShort(value);
 			cur.next = nd;
 			cur = nd;
@@ -84,7 +84,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(2)) {
 			cur.writeShortLE(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeShortLE(value);
 			cur.next = nd;
 			cur = nd;
@@ -99,7 +99,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(3)) {
 			cur.writeMedium(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeMedium(value);
 			cur.next = nd;
 			cur = nd;
@@ -114,7 +114,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(3)) {
 			cur.writeMediumLE(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeMediumLE(value);
 			cur.next = nd;
 			cur = nd;
@@ -129,7 +129,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(4)) {
 			cur.writeInt(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeInt(value);
 			cur.next = nd;
 			cur = nd;
@@ -144,7 +144,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(4)) {
 			cur.writeInt(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeIntLE(value);
 			cur.next = nd;
 			cur = nd;
@@ -159,7 +159,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(8)) {
 			cur.writeLong(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeLong(value);
 			cur.next = nd;
 			cur = nd;
@@ -174,7 +174,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(8)) {
 			cur.writeLongLE(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeLongLE(value);
 			cur.next = nd;
 			cur = nd;
@@ -189,7 +189,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(2)) {
 			cur.writeChar(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeChar(value);
 			cur.next = nd;
 			cur = nd;
@@ -204,7 +204,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(4)) {
 			cur.writeFloat(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeFloat(value);
 			cur.next = nd;
 			cur = nd;
@@ -219,7 +219,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(4)) {
 			cur.writeFloatLE(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeFloatLE(value);
 			cur.next = nd;
 			cur = nd;
@@ -234,7 +234,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(8)) {
 			cur.writeDouble(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeDouble(value);
 			cur.next = nd;
 			cur = nd;
@@ -249,7 +249,7 @@ class CompositeOutputBuf implements OutputBuf {
 		if (cur.writable(8)) {
 			cur.writeDoubleLE(value);
 		} else {
-			DirectByteOutputBuf nd = first.alloc.buffer();
+			DirectOutputBuf nd = first.alloc.buffer();
 			nd.writeDoubleLE(value);
 			cur.next = nd;
 			cur = nd;
@@ -280,7 +280,7 @@ class CompositeOutputBuf implements OutputBuf {
 					srcIndex += len;
 					size+=len;
 				}
-				DirectByteOutputBuf nd = first.alloc.buffer();
+				DirectOutputBuf nd = first.alloc.buffer();
 				cur.next = nd;
 				cur = nd;
 			}
@@ -304,20 +304,20 @@ class CompositeOutputBuf implements OutputBuf {
 
 	@Override
 	public CompositeOutputBuf retain() {
-		DirectByteOutputBuf buf = this.first;
+		DirectOutputBuf buf = this.first;
 		while(buf!=null){
 			++buf.refCnt;
-			buf = (DirectByteOutputBuf)buf.next;
+			buf = (DirectOutputBuf)buf.next;
 		}
 		return this;
 	}
 
 	@Override
 	public void release() {
-		DirectByteOutputBuf buf = this.first;
+		DirectOutputBuf buf = this.first;
 		while(buf!=null){
 			buf.release();
-			buf = (DirectByteOutputBuf)buf.next;
+			buf = (DirectOutputBuf)buf.next;
 		}
 
 	}

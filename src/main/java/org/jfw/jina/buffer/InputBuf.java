@@ -313,6 +313,7 @@ public interface InputBuf {
 	 *             if {@code length} is greater than {@code this.readableBytes}
 	 */
 	InputBuf skipBytes(int length);
+	InputBuf skipAllBytes();
 	
 	
 	/**

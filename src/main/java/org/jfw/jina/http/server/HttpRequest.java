@@ -13,6 +13,7 @@ public interface HttpRequest {
 	String hash();
 	HttpHeaders headers();
 	void setRequestExecutor(RequestExecutor builder);
+	void abort();
 	public interface RequestExecutor{
 		void setAsyncExecutor(HttpAsyncExecutor executor);
 		void requestBody(HttpRequest request,InputBuf buf);

@@ -2,11 +2,8 @@ package org.jfw.jina.core;
 
 import java.util.concurrent.TimeUnit;
 
-import org.jfw.jina.util.QueueProvider;
-import org.jfw.jina.util.concurrent.AsyncExecutorGroup;
 
-
-public interface AsyncExecutor extends QueueProvider {
+public interface AsyncExecutor {
 	AsyncExecutorGroup group();
     boolean inLoop();
     void shutdown();

@@ -10,7 +10,7 @@ import org.jfw.jina.util.concurrent.spi.AbstractAsyncExecutor;
 
 public class DirectAllocator implements BufAllocator {
 	private final AbstractAsyncExecutor executor;
-	DirectByteOutputBuf head;
+	DirectOutputBuf head;
 	private int numOfIdleBuf = 0;
 	private final int maxIdleBuf;
 	private final int capacity;
@@ -24,20 +24,20 @@ public class DirectAllocator implements BufAllocator {
 	}
 
 	@Override
-	public DirectByteOutputBuf buffer() {
+	public DirectOutputBuf buffer() {
 		assert executor.inLoop();
 		if(head==null){
-			return new DirectByteOutputBuf(this, ByteBuffer.allocateDirect(capacity));
+			return new DirectOutputBuf(this, ByteBuffer.allocateDirect(capacity));
 		}else{
-			DirectByteOutputBuf ret = head;
-			head =(DirectByteOutputBuf)ret.next;
+			DirectOutputBuf ret = head;
+			head =(DirectOutputBuf)ret.next;
 			ret.next = null;
 			--this.numOfIdleBuf;
 			return ret.retain();
 		}
 	}
 	
-	void release(DirectByteOutputBuf buf){
+	void release(DirectOutputBuf buf){
 		if(this.numOfIdleBuf< this.maxIdleBuf){
 			++this.numOfIdleBuf;
 			buf.next = head;

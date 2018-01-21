@@ -1,7 +1,7 @@
 package org.jfw.jina.http.server;
 
 import org.jfw.jina.buffer.InputBuf;
-import org.jfw.jina.core.AsyncTask;
+import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.http.HttpResponseStatus;
 
 public interface HttpResponse {
@@ -13,7 +13,8 @@ public interface HttpResponse {
 	void addHeader(String name,String value);
 	void setStatus(HttpResponseStatus httpResponseStatus);
 	void addBody(InputBuf buf);
-	void flush(InputBuf buf,AsyncTask task);
+	void flush(InputBuf buf,TaskCompletionHandler task);
+	void flush(InputBuf buf);
 	void fail();
 	void sendClientError(HttpResponseStatus error);
 }

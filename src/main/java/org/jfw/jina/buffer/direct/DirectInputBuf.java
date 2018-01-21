@@ -15,9 +15,9 @@ public class DirectInputBuf implements InputBuf {
 	protected int pos;
 	protected final int limit;
 	int refCnt;
-	DirectByteOutputBuf wrap;
+	DirectOutputBuf wrap;
 
-	DirectInputBuf(DirectByteOutputBuf wrap, int limit) {
+	DirectInputBuf(DirectOutputBuf wrap, int limit) {
 		assert wrap != null && wrap.alloc.executor().inLoop();
 		assert limit > 0;
 		this.wrap = wrap;
@@ -434,5 +434,11 @@ public class DirectInputBuf implements InputBuf {
 		assert this.limit-length >= this.pos;
 		++wrap.refCnt;
 		return new SliceInputBuf(wrap,pos, this.limit-length);
+	}
+
+	@Override
+	public InputBuf skipAllBytes() {
+		this.pos = this.limit;
+		return this;
 	}
 }

@@ -9,7 +9,7 @@ import java.nio.channels.ScatteringByteChannel;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
 
-class DirectByteOutputBuf implements OutputBuf {
+class DirectOutputBuf implements OutputBuf {
 	int refCnt;
 	final ByteBuffer buffer;
 	int writerIndex;
@@ -17,7 +17,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	Object next;
 	int capacity;
 
-	DirectByteOutputBuf(DirectAllocator alloc, ByteBuffer buffer) {
+	DirectOutputBuf(DirectAllocator alloc, ByteBuffer buffer) {
 		this.alloc = alloc;
 		this.buffer = buffer;
 		this.buffer.order(ByteOrder.BIG_ENDIAN);
@@ -47,21 +47,21 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 	
 	@Override
-	public DirectByteOutputBuf writeBoolean(boolean value) {
+	public DirectOutputBuf writeBoolean(boolean value) {
 		assert writable(1);
 		this.buffer.put(this.writerIndex++, (byte) (value ? 1 : 0));
 		return this;
 	}
 
 	@Override
-	public DirectByteOutputBuf writeByte(int value) {
+	public DirectOutputBuf writeByte(int value) {
 		assert writable(1);
 		this.buffer.put(this.writerIndex++, (byte) value);
 		return this;
 	}
 
 	@Override
-	public DirectByteOutputBuf writeShort(int value) {
+	public DirectOutputBuf writeShort(int value) {
 		assert writable(2);
 		this.buffer.putShort(this.writerIndex, (short) value);
 		this.writerIndex += 2;
@@ -69,7 +69,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeShortLE(int value) {
+	public DirectOutputBuf writeShortLE(int value) {
 		assert writable(2);
 		this.buffer.putShort(this.writerIndex, Short.reverseBytes((short) value));
 		this.writerIndex += 2;
@@ -77,7 +77,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeMedium(int value) {
+	public DirectOutputBuf writeMedium(int value) {
 		assert writable(3);
 		buffer.put(this.writerIndex++, (byte) (value >>> 16));
 		buffer.put(this.writerIndex++, (byte) (value >>> 8));
@@ -86,7 +86,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeMediumLE(int value) {
+	public DirectOutputBuf writeMediumLE(int value) {
 		assert writable(3);
 		buffer.put(this.writerIndex++, (byte) value);
 		buffer.put(this.writerIndex++, (byte) (value >>> 8));
@@ -95,7 +95,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeInt(int value) {
+	public DirectOutputBuf writeInt(int value) {
 		assert writable(4);
 		buffer.putInt(this.writerIndex, value);
 		this.writerIndex += 4;
@@ -103,7 +103,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeIntLE(int value) {
+	public DirectOutputBuf writeIntLE(int value) {
 		assert writable(4);
 		buffer.putInt(this.writerIndex, Integer.reverseBytes(value));
 		this.writerIndex += 4;
@@ -111,7 +111,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeLong(long value) {
+	public DirectOutputBuf writeLong(long value) {
 		assert writable(8);
 		buffer.putLong(this.writerIndex, value);
 		this.writerIndex += 8;
@@ -119,7 +119,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeLongLE(long value) {
+	public DirectOutputBuf writeLongLE(long value) {
 		assert writable(8);
 		buffer.putLong(this.writerIndex, Long.reverseBytes(value));
 		this.writerIndex += 8;
@@ -127,7 +127,7 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeChar(int value) {
+	public DirectOutputBuf writeChar(int value) {
 		assert writable(2);
 		buffer.putShort(this.writerIndex, (short) value);
 		this.writerIndex += 2;
@@ -135,32 +135,32 @@ class DirectByteOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf writeFloat(float value) {
+	public DirectOutputBuf writeFloat(float value) {
 		return writeInt(Float.floatToRawIntBits(value));
 	}
 
 	@Override
-	public DirectByteOutputBuf writeFloatLE(float value) {
+	public DirectOutputBuf writeFloatLE(float value) {
 		return writeIntLE(Float.floatToRawIntBits(value));
 	}
 
 	@Override
-	public DirectByteOutputBuf writeDouble(double value) {
+	public DirectOutputBuf writeDouble(double value) {
 		return writeLong(Double.doubleToRawLongBits(value));
 	}
 
 	@Override
-	public DirectByteOutputBuf writeDoubleLE(double value) {
+	public DirectOutputBuf writeDoubleLE(double value) {
 		return writeLongLE(Double.doubleToRawLongBits(value));
 	}
 
 	@Override
-	public DirectByteOutputBuf writeBytes(byte[] src) {
+	public DirectOutputBuf writeBytes(byte[] src) {
 		return this.writeBytes(src, 0, src.length);
 	}
 
 	@Override
-	public DirectByteOutputBuf writeBytes(byte[] src, int srcIndex, int length) {
+	public DirectOutputBuf writeBytes(byte[] src, int srcIndex, int length) {
 		assert src != null && srcIndex >= 0 && length > 0 && srcIndex + length <= srcIndex && writable(length);
 		buffer.mark();
 		try {
@@ -209,7 +209,7 @@ class DirectByteOutputBuf implements OutputBuf {
 
 
 	@Override
-	public DirectByteOutputBuf retain() {
+	public DirectOutputBuf retain() {
 		assert alloc.executor().inLoop();
 		++refCnt;
 		return this;
@@ -236,9 +236,9 @@ class DirectByteOutputBuf implements OutputBuf {
 	@Override
 	public HeadOutputBuf keepHead(int size) {
 		assert alloc.executor().inLoop()  && size > 0 && size < this.capacity 	&& this.writerIndex == 0;
-		((DirectByteOutputBuf) next).retain();
+		((DirectOutputBuf) next).retain();
 		this.writerIndex+=size;
-		return new HeadOutputBuf((DirectByteOutputBuf) next, size);
+		return new HeadOutputBuf((DirectOutputBuf) next, size);
 	}
 	@Override
 	public long size() {

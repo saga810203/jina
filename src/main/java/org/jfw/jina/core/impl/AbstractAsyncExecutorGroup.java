@@ -1,4 +1,4 @@
-package org.jfw.jina.util.concurrent;
+package org.jfw.jina.core.impl;
 
 import java.util.Collections;
 import java.util.Iterator;
@@ -8,10 +8,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.jfw.jina.core.AsyncExecutor;
-import org.jfw.jina.core.impl.ProxyAsyncExecutor;
+import org.jfw.jina.core.AsyncExecutorGroup;
 
 public abstract class AbstractAsyncExecutorGroup implements AsyncExecutorGroup {
-	private final AsyncExecutor[] children;
+	protected final AsyncExecutor[] children;
 	private final Set<AsyncExecutor> readonlyChildren;
 	private final AtomicInteger terminatedChildren = new AtomicInteger();
 	private final CountDownLatch downLatch;
@@ -108,8 +108,13 @@ public abstract class AbstractAsyncExecutorGroup implements AsyncExecutorGroup {
 		}
 	}
 
-	public abstract AsyncExecutor newChild(int idx);
+	public abstract AsyncExecutor newChild(Runnable closeTask);
 
+	
+	public AsyncExecutor newChild(int idx){
+		this.children[idx] = this.newChild(this.childCloseTask);
+		return this.children[idx];
+	}
 	interface EventExecutorChooser {
 		AsyncExecutor next();
 	}

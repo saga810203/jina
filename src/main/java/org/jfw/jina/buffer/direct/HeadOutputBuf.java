@@ -14,7 +14,7 @@ class HeadOutputBuf implements OutputBuf {
 	Object next;
 	int capacity;
 
-	public HeadOutputBuf(DirectByteOutputBuf buf, int capacity) {
+	public HeadOutputBuf(DirectOutputBuf buf, int capacity) {
 		assert buf != null && capacity > 0 && capacity <= buf.buffer.capacity();
 		this.writerIndex = 0;
 		this.buffer = buf.buffer;
@@ -24,19 +24,19 @@ class HeadOutputBuf implements OutputBuf {
 
 	@Override
 	public int writableBytes() {
-		assert next != null && ((DirectByteOutputBuf) next).alloc.executor().inLoop() && this.buffer != null;
+		assert next != null && ((DirectOutputBuf) next).alloc.executor().inLoop() && this.buffer != null;
 		return this.capacity - this.writerIndex;
 	}
 
 	@Override
 	public boolean writable() {
-		assert next != null && ((DirectByteOutputBuf) next).alloc.executor().inLoop() && this.buffer != null;
+		assert next != null && ((DirectOutputBuf) next).alloc.executor().inLoop() && this.buffer != null;
 		return this.capacity > this.writerIndex;
 	}
 
 	@Override
 	public boolean writable(int size) {
-		assert next != null && ((DirectByteOutputBuf) next).alloc.executor().inLoop() && this.buffer != null;
+		assert next != null && ((DirectOutputBuf) next).alloc.executor().inLoop() && this.buffer != null;
 		;
 		assert size > 0;
 		return this.capacity - this.writerIndex >= size;
@@ -180,15 +180,15 @@ class HeadOutputBuf implements OutputBuf {
 	}
 
 	@Override
-	public DirectByteOutputBuf retain() {
+	public DirectOutputBuf retain() {
 		throw new UnsupportedOperationException();
 	}
 
 	@Override
 	public void release() {
-		assert null != next && next instanceof DirectByteOutputBuf && ((DirectByteOutputBuf) next).alloc.executor().inLoop();
+		assert null != next && next instanceof DirectOutputBuf && ((DirectOutputBuf) next).alloc.executor().inLoop();
 		if (next != null) {
-			((DirectByteOutputBuf) next).release();
+			((DirectOutputBuf) next).release();
 			next = null;
 			buffer = null;
 		}
@@ -201,16 +201,16 @@ class HeadOutputBuf implements OutputBuf {
 
 	@Override
 	public OutputBuf keepHead(int size) {
-		assert next != null && ((DirectByteOutputBuf) next).alloc.executor().inLoop() && size > 0 && size < this.capacity
+		assert next != null && ((DirectOutputBuf) next).alloc.executor().inLoop() && size > 0 && size < this.capacity
 				&& this.writerIndex == 0;
-		((DirectByteOutputBuf) next).retain();
+		((DirectOutputBuf) next).retain();
 		this.writerIndex+=size;
-		return new HeadOutputBuf((DirectByteOutputBuf) next, size);
+		return new HeadOutputBuf((DirectOutputBuf) next, size);
 	}
 
 	@Override
 	public long size() {
-		assert next != null && ((DirectByteOutputBuf) next).alloc.executor().inLoop();
+		assert next != null && ((DirectOutputBuf) next).alloc.executor().inLoop();
 		return this.writerIndex;
 	}
 

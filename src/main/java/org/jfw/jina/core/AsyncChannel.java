@@ -1,4 +1,4 @@
-package org.jfw.jina.util.concurrent;
+package org.jfw.jina.core;
 
 import java.nio.channels.SelectionKey;
 

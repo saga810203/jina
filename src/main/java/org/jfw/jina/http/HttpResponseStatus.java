@@ -279,7 +279,8 @@ public class HttpResponseStatus {
 
 	public static final HttpResponseStatus REQUEST_INVALID_CONTENT_LENGTH = new HttpResponseStatus(481, "Request Content-Length Not Integer", false);
 	public static final HttpResponseStatus REQUEST_INVALID_CHUNKED_SIZE = new HttpResponseStatus(482, "Request Invalid Chunked Size", false);
-	public static final HttpResponseStatus REQUEST_CLIENT_CLOSE = new HttpResponseStatus(483, "Request Client Closed", false);
+	public static final HttpResponseStatus REQUEST_INVALID_CHUNKED_FOOTER = new HttpResponseStatus(483, "Request Invalid Chunked Footer", false);
+	public static final HttpResponseStatus REQUEST_CLIENT_CLOSE = new HttpResponseStatus(484, "Request Client Closed", false);
 
 	/**
 	 * 500 Internal Server Error

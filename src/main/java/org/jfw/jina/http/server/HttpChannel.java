@@ -10,39 +10,41 @@ import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncTask;
+import org.jfw.jina.core.AsyncTaskAdapter;
+import org.jfw.jina.core.TaskCompletionHandler;
+import org.jfw.jina.core.impl.NioAsyncChannel;
 import org.jfw.jina.http.HttpConsts;
 import org.jfw.jina.http.HttpHeaders;
 import org.jfw.jina.http.HttpResponseStatus;
+import org.jfw.jina.http.KeepAliveCheck;
 import org.jfw.jina.http.impl.DefaultHttpHeaders;
 import org.jfw.jina.http.impl.DefaultHttpParameters;
 import org.jfw.jina.http.server.HttpRequest.HttpMethod;
 import org.jfw.jina.http.server.HttpRequest.RequestExecutor;
+import org.jfw.jina.util.DQueue.DNode;
 import org.jfw.jina.util.StringUtil;
-import org.jfw.jina.util.common.Queue;
-import org.jfw.jina.util.common.Queue.Node;
-import org.jfw.jina.util.concurrent.NioAsyncChannel;
+import org.jfw.jina.util.TagQueue.TagNode;
 
-public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
-	private enum State {
-		SKIP_CONTROL_CHARS ,
-		READ_INITIAL ,
-		READ_HEADER ,
-		READ_VARIABLE_LENGTH_CONTENT ,
-		READ_FIXED_LENGTH_CONTENT ,
-		READ_CHUNK_SIZE ,
-		READ_CHUNKED_CONTENT ,
-		READ_CHUNK_DELIMITER
-	}
+public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> implements KeepAliveCheck {
 
-	private Node keepAliveNode;
-	private Queue keepAliveQueue;
+	private static final int HTTP_STATE_SKIP_CONTROL_CHARS = 10;
+	private static final int HTTP_STATE_READ_INITIAL = 20;
+	private static final int HTTP_STATE_READ_HEADER = 30;
+	private static final int HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT = 40;
+	private static final int HTTP_STATE_READ_FIXED_LENGTH_CONTENT = 50;
+	private static final int HTTP_STATE_READ_CHUNK_SIZE = 60;
+	private static final int HTTP_STATE_READ_CHUNKED_CONTENT = 63;
+	private static final int HTTP_STATE_READ_CHUNK_DELIMITER = 65;
+	private static final int HTTP_STATE_READ_CHUNK_FOOTER = 67;
+	private static final int HTTP_STATE_INVOKING = 90;
+	private static final int HTTP_STATE_IGNORE = -1;
+
+	private DNode keepAliveNode;
 	private long keepAliveTimeout;
 
 	protected HttpServerRequest request = null;
 	protected HttpServerResponse response = null;
 	protected LineParser lineParser = new LineParser(8192);
-
-	protected InputBuf cacheBuffer = null;
 
 	protected HttpService service = new HttpService();
 
@@ -52,8 +54,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 
 	@Override
 	protected void afterRegister() {
-		this.keepAliveQueue = this.executor.getKeepAliveQueue();
-		this.keepAliveTimeout = this.executor.getKeepAliveTimeout();
+		this.keepAliveNode = this.executor.newDNode(this);
 		this.addKeepAliveCheck();
 	}
 
@@ -69,40 +70,153 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		this.service = service;
 	}
 
-	public void removeKeepAliveCheck() {
-		if (this.keepAliveNode != null) {
-			this.keepAliveQueue.remove(this.keepAliveNode);
+	public boolean removeKeepAliveCheck() {
+		if (this.keepAliveTimeout != Long.MAX_VALUE) {
+			this.keepAliveTimeout = Long.MAX_VALUE;
+			this.keepAliveNode.dequeue();
+			return true;
 		}
+		return false;
 	}
 
-	public void addKeepAliveCheck() {
-		if (this.keepAliveNode != null) {
-			this.keepAliveQueue.remove(this.keepAliveNode);
+	public boolean addKeepAliveCheck() {
+		if (this.keepAliveTimeout == Long.MAX_VALUE) {
+			this.keepAliveTimeout = System.currentTimeMillis();
+			this.keepAliveNode.enqueue(this.executor.getKeepAliveQueue());
+			return true;
 		}
-		this.keepAliveNode = this.keepAliveQueue.add(System.currentTimeMillis() + this.keepAliveTimeout);
+		return false;
 	}
 
 	protected void beginRead() {
-		this.setOpRead();
-		this.addKeepAliveCheck();
-		if (this.cacheBuffer != null) {
-			InputBuf buf = cacheBuffer;
-			cacheBuffer = null;
-			this.handleRead(buf, buf.readableBytes());
-			buf.release();
+		assert this.currentState == HTTP_STATE_INVOKING;
+		if (inputCache.isEmpty()) {
+			this.currentState = HTTP_STATE_SKIP_CONTROL_CHARS;
+			if(this.addKeepAliveCheck()){
+				this.setOpRead();
+			}
+		} else {
+			executor.submit(handReadDelay);
 		}
 	}
-	protected void endRead(InputBuf buf){
-		if(buf.readable()){
-			this.cacheBuffer = buf.retain();
+
+	protected final AsyncTask handReadDelay = new AsyncTaskAdapter() {
+		@Override
+		public void execute(AsyncExecutor executor) throws Throwable {
+			handleInputCache();
+		}
+	};
+
+	protected boolean handleFixLenthRead(InputBuf buf) {
+		if (chunkSize == 0) {
+			this.requestInvoke();
+			return true;
+		}
+		int nr = buf.readableBytes();
+		if (nr == 0)
+			return false;
+		if (nr > chunkSize) {
+			InputBuf dbuf = buf.duplicate((int) chunkSize);
+			this.requestBodyRead(dbuf);
+			dbuf.release();
+			buf.skipBytes((int) chunkSize);
+			this.requestInvoke();
+			return true;
+		} else {
+			InputBuf ibuf = buf.slice();
+			this.requestBodyRead(ibuf);
+			ibuf.release();
+			buf.skipAllBytes();
+			chunkSize -= nr;
+			if (chunkSize == 0) {
+				this.requestInvoke();
+				return true;
+			}
+			return false;
+		}
+	}
+
+	protected void handleInputCache() {
+		TagNode input = null;
+		InputBuf buf = null;
+		int len = -1;
+		this.currentState = HTTP_STATE_SKIP_CONTROL_CHARS;
+		while ((input = this.inputCache.peekTagNode()) != null) {
+			buf = (InputBuf) input.item();
+			len = ((Integer) input.tag()).intValue();
+			if (len > 0) {
+				for (;;) {
+					if (currentState == HTTP_STATE_SKIP_CONTROL_CHARS) {
+						if (!this.doSkipControlChars(buf)) {
+							break;
+						}
+					}
+					if (currentState == HTTP_STATE_READ_INITIAL) {
+						if (!this.doReadRequestLine(buf)) {
+							break;
+						}
+					}
+					if (currentState == HTTP_STATE_READ_HEADER) {
+						if (!this.doReadHeaders(buf)) {
+							this.addKeepAliveCheck();
+							break;
+						}
+					}
+					if (currentState == HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT) {
+						if (buf.readable()) {
+							InputBuf ibuf = buf.slice();
+							this.requestBodyRead(ibuf);
+							ibuf.release();
+							buf.skipAllBytes();
+						}
+						break;
+					}
+					if (currentState == HTTP_STATE_READ_FIXED_LENGTH_CONTENT) {
+						if (!this.handleFixLenthRead(buf)) {
+							break;
+						}
+					}
+					if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT
+							|| currentState == HTTP_STATE_READ_CHUNK_DELIMITER
+							|| currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
+						if (!this.readInChunked(buf)) {
+							break;
+						}
+					}
+
+					if (currentState == HTTP_STATE_INVOKING) {
+						int unReadSize = buf.readableBytes();
+						if (unReadSize == 0) {
+							buf.release();
+							inputCache.poll();
+						}
+						return;
+					}
+					if (currentState == HTTP_STATE_IGNORE) {
+						inputCache.clear(RELEASE_INPUT_BUF);
+						return;
+					}
+				}
+				buf.release();
+				inputCache.poll();
+			} else {
+				this.inputCache.clear(RELEASE_INPUT_BUF);
+				this.handleCloseInput();
+				return;
+			}
+		}
+		if(this.addKeepAliveCheck()){
+			this.setOpRead();
 		}
 	}
 
 	@Override
 	public void close() {
-		if (this.cacheBuffer != null) {
-			this.cacheBuffer.release();
-			this.cacheBuffer = null;
+		if(this.keepAliveTimeout!=Long.MAX_VALUE){
+			this.keepAliveTimeout =Long.MAX_VALUE;
+			this.keepAliveNode.dequeue();
+			this.executor.freeDNode(this.keepAliveNode);
+			this.keepAliveNode = null;
 		}
 		this.closeJavaChannel();
 	}
@@ -147,15 +261,15 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		}
 	}
 
-	private State readHeaders(InputBuf buffer) {
+	private boolean doReadHeaders(InputBuf buffer) {
 		int lineSize = lineParser.parseLine(buffer);
 		if (lineSize < 0) {
-			return null;
+			return false;
 		} else if (lineSize > 0) {
 			do {
 				if (lineSize >= lineParser.maxLength) {
 					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_HEADER_FIELDS_TOO_LARGE);
-					return null;
+					return true;
 				}
 				char[] seq = lineParser.seq;
 				char firstChar = seq[0];
@@ -172,7 +286,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 
 				lineSize = lineParser.parseLine(buffer);
 				if (lineSize < 0) {
-					return null;
+					return false;
 				}
 			} while (lineSize > 0);
 		}
@@ -184,27 +298,54 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		// reset name and value fields
 		hName = null;
 		hValue = null;
-		State nextState;
 		HttpMethod method = this.request.method;
 		if (method == HttpMethod.GET || method == HttpMethod.DELETE) {
 			contentLength = 0;
-			nextState = State.READ_FIXED_LENGTH_CONTENT;
+			chunkSize = 0;
+			this.currentState = HTTP_STATE_READ_FIXED_LENGTH_CONTENT;
 		} else if (this.isTransferEncodingChunked()) {
-			nextState = State.READ_CHUNK_SIZE;
+			this.currentState = HTTP_STATE_READ_CHUNK_SIZE;
 		} else {
 			long cl = contentLength();
 			if (cl == Long.MIN_VALUE) {
 				this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CONTENT_LENGTH);
-				return null;
+				return true;
 			} else if (cl >= 0) {
-				nextState = State.READ_FIXED_LENGTH_CONTENT;
+				this.currentState = HTTP_STATE_READ_FIXED_LENGTH_CONTENT;
 			} else {
 				this.response.requestKeepAlive = false;
-				return State.READ_VARIABLE_LENGTH_CONTENT;
+				this.currentState = HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT;
+				this.configRequest();
+				return true;
 			}
 		}
-		this.request.doAfterHeaderParse();
-		return nextState;
+		this.response.requestKeepAlive = this.request.headers.isKeepAlive();
+		this.configRequest();
+		return true;
+	}
+
+	private boolean readTrailingHeaders(InputBuf buf) {
+		// AppendableCharSequence line = headerParser.parse(buffer);
+		int lineSize = lineParser.parseLine(buf);
+		if (lineSize < 0) {
+			return false;
+		} else if (lineSize > 0) {
+			do {
+				if (lineSize >= lineParser.maxLength) {
+					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_FOOTER);
+					return true;
+				}
+
+				// TODO: IGNORE
+
+				lineSize = lineParser.parseLine(buf);
+				if (lineSize < 0) {
+					return false;
+				}
+			} while (lineSize > 0);
+		}
+		this.requestInvoke();
+		return true;
 	}
 
 	private long contentLength() {
@@ -226,42 +367,39 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		return val != null && val.equalsIgnoreCase(HttpConsts.CHUNKED);
 	}
 
-	private State currentState = State.SKIP_CONTROL_CHARS;
+	private int currentState = HTTP_STATE_SKIP_CONTROL_CHARS;
 	private long contentLength = Long.MAX_VALUE;
 	private long chunkSize = 0;
 
 	protected void resetRequest() {
 		this.request = null;
 		this.response = null;
-		this.currentState = State.SKIP_CONTROL_CHARS;
 		this.contentLength = Long.MAX_VALUE;
 		this.chunkSize = 0;
-		this.cleanOpRead();
 	}
 
 	protected void handleInvalidHttpresutst(HttpResponseStatus error) {
-		this.request = null;
-		if (this.request != null) {
-			request.requestExecutor.error(request, error.getCode());
+		if (this.currentState != HTTP_STATE_IGNORE) {
+			if (this.request != null) {
+				request.requestExecutor.error(request, error.getCode());
+			}
+			this.request = null;
+			this.response = null;
+			this.currentState = HTTP_STATE_IGNORE;
+			OutputBuf buf = executor.allocBuffer();
+			byte[] bs = error.getReason();
+			buf = this.writeAscii(buf, "HTTP/1.1 " + error.getCode() + ' ');
+			buf = this.writeBytes(buf, bs, 0, bs.length);
+			buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+			buf = this.writeHttpHeader(buf, HttpConsts.CONTENT_LENGTH, Integer.toString(bs.length));
+			buf = this.writeHttpHeader(buf, HttpConsts.CONTENT_TYPE, HttpConsts.TEXT_HTML_UTF8);
+			buf = this.writeHttpHeader(buf, HttpConsts.DATE, executor.dateFormatter.httpDateHeaderValue());
+			buf = this.writeHttpHeader(buf, HttpConsts.CONNECTION, HttpConsts.CLOSE);
+			buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+			buf = this.writeBytes(buf, bs, 0, bs.length);
+			this.write(buf.input(), closeTask);
+			buf.release();
 		}
-		this.response = null;
-		this.contentLength = Long.MAX_VALUE;
-		this.chunkSize = Long.MAX_VALUE;
-		this.currentState = State.READ_FIXED_LENGTH_CONTENT;
-		this.setOpRead();
-		OutputBuf buf = executor.allocBuffer();
-		byte[] bs = error.getReason();
-		buf = this.writeAscii(buf, "HTTP/1.1 " + error.getCode() + ' ');
-		buf = this.writeBytes(buf, bs, 0, bs.length);
-		buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
-		buf = this.writeHttpHeader(buf, HttpConsts.CONTENT_LENGTH, Integer.toString(bs.length));
-		buf = this.writeHttpHeader(buf, HttpConsts.CONTENT_TYPE, HttpConsts.TEXT_HTML_UTF8);
-		buf = this.writeHttpHeader(buf, HttpConsts.DATE, executor.dateFormatter.httpDateHeaderValue());
-		buf = this.writeHttpHeader(buf, HttpConsts.CONNECTION, HttpConsts.CLOSE);
-		buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
-		buf = this.writeBytes(buf, bs, 0, bs.length);
-		this.write(buf.input(), closeTask);
-		buf.release();
 	}
 
 	protected OutputBuf writeHttpHeader(OutputBuf buf, String name, String value) {
@@ -289,13 +427,13 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		return buf;
 	}
 
-	protected State readRequestLine(InputBuf buffer) {
+	protected boolean doReadRequestLine(InputBuf buffer) {
 		int size = lineParser.parseLine(buffer);
 		if (size < 0) {
-			return null;
+			return false;
 		} else if (size >= lineParser.maxLength) {
 			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_URI_TOO_LONG);
-			return null;
+			return true;
 		} else {
 			char[] seq = lineParser.seq;
 			int start;
@@ -305,12 +443,12 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 			start = StringUtil.findNonWhitespace(seq, 0, size);
 			if (start >= size) {
 				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return null;
+				return true;
 			}
 			end = StringUtil.findWhitespace(seq, start, size);
 			if (end >= size) {
 				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return null;
+				return true;
 			}
 			len = end - start;
 			if (len == 3) {
@@ -326,12 +464,12 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 			}
 			if (method == null) {
 				this.handleInvalidHttpresutst(HttpResponseStatus.METHOD_NOT_ALLOWED);
-				return null;
+				return true;
 			}
 			end = StringUtil.findWhitespace(seq, start, size);
 			if (end >= size) {
 				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return null;
+				return true;
 			}
 			int qStart = 0;
 			int hStart = Integer.MAX_VALUE;
@@ -370,28 +508,29 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 				}
 			} else {
 				this.handleInvalidHttpresutst(HttpResponseStatus.METHOD_NOT_ALLOWED);
-				return null;
+				return true;
 			}
 
 			uri = StringUtil.normalize(seq, start, end);
 			if (uri == null) {
 				this.handleInvalidHttpresutst(HttpResponseStatus.METHOD_NOT_ALLOWED);
-				return null;
+				return true;
 			}
 
 			start = StringUtil.findNonWhitespace(seq, end, size);
 			if (start >= size) {
 				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return null;
+				return true;
 			}
 			end = StringUtil.findEndOfString(seq, start, size);
 			if ((end - start == 8) && StringUtil.equals(HttpConsts.HTTP11, 0, seq, start, 8)) {
 				this.request = this.newRequest(method, uri, qs, hs);
 				this.response = this.request.response;
-				return State.READ_HEADER;
+				this.currentState = HTTP_STATE_READ_HEADER;
+				return true;
 			}
 			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-			return null;
+			return true;
 		}
 	}
 
@@ -413,6 +552,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 	}
 
 	protected void requestInvoke() {
+		this.currentState = HTTP_STATE_INVOKING;
 		try {
 			request.requestExecutor.execute(this.request, response);
 		} catch (Throwable e) {
@@ -432,7 +572,8 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		StringWriter sw = new StringWriter();
 		PrintWriter pw = new PrintWriter(sw);
 		e.printStackTrace(pw);
-		buf = StringUtil.utf8(HttpResponseStatus.buildHtmlPage(HttpResponseStatus.INTERNAL_SERVER_ERROR, sw.toString()));
+		buf = StringUtil
+				.utf8(HttpResponseStatus.buildHtmlPage(HttpResponseStatus.INTERNAL_SERVER_ERROR, sw.toString()));
 		response.setStatus(HttpResponseStatus.INTERNAL_SERVER_ERROR);
 		response.addHeader(HttpConsts.CONTENT_LENGTH, Integer.toString(buf.length));
 		OutputBuf buffer = this.writeBytes(executor.allocBuffer(), buf, 0, buf.length);
@@ -441,147 +582,179 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		request.setRequestExecutor(IGRONE_EXECUTOR);
 	}
 
+	private boolean doSkipControlChars(InputBuf buf) {
+		if (!buf.skipControlCharacters()) {
+			return false;
+		}
+		if (this.request != null) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.TOO_MANY_REQUESTS);
+			return true;
+		}
+		currentState = HTTP_STATE_READ_INITIAL;
+		return true;
+	}
+
+	private boolean readInChunked(InputBuf buf) {
+		for (;;) {
+			if (currentState == HTTP_STATE_READ_CHUNK_SIZE) {
+				int lineSize = lineParser.parseLine(buf);
+				if (lineSize < 0) {
+					return false;
+				} else if (lineSize >= lineParser.maxLength) {
+					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
+					return true;
+				}
+				this.chunkSize = lineParser.getChunkSize(lineSize);
+				if (chunkSize == Integer.MIN_VALUE) {
+					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
+					return true;
+				}
+				if (chunkSize == 0) {
+					currentState = HTTP_STATE_READ_CHUNK_FOOTER;
+				} else {
+					currentState = HTTP_STATE_READ_CHUNKED_CONTENT;
+				}
+			}
+			if (currentState == HTTP_STATE_READ_CHUNKED_CONTENT) {
+				assert chunkSize <= Integer.MAX_VALUE;
+				long nr = buf.readableBytes();
+				if (nr > chunkSize) {
+					InputBuf dbuf = buf.duplicate((int) chunkSize);
+					this.requestBodyRead(dbuf);
+					dbuf.release();
+					buf.skipBytes((int) chunkSize);
+					this.currentState = HTTP_STATE_READ_CHUNK_DELIMITER;
+				} else if (nr > 0) {
+					InputBuf dBuf = buf.slice();
+					this.requestBodyRead(dBuf);
+					dBuf.release();
+					buf.skipAllBytes();
+					chunkSize -= nr;
+					if (chunkSize == 0) {
+						this.currentState = HTTP_STATE_READ_CHUNK_DELIMITER;
+					}
+					return false;
+				} else {
+					return false;
+				}
+			}
+			if (currentState == HTTP_STATE_READ_CHUNK_DELIMITER) {
+				while (buf.readable()) {
+					if (buf.readByte() == 10) {
+						currentState = HTTP_STATE_READ_CHUNK_SIZE;
+						break;
+					}
+				}
+				if (currentState == HTTP_STATE_READ_CHUNK_DELIMITER) {
+					return false;
+				}
+			}
+			if (currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
+				return this.readTrailingHeaders(buf);
+			}
+		}
+	}
+
 	@Override
 	protected void handleRead(InputBuf buf, int len) {
 		this.removeKeepAliveCheck();
-		State nextState = null;
 		if (len > 0) {
 			for (;;) {
-				switch (currentState) {
-					case SKIP_CONTROL_CHARS: {
-						if (!buf.skipControlCharacters()) {
-							return;
-						}
-						if (this.request != null) {
-							this.handleInvalidHttpresutst(HttpResponseStatus.TOO_MANY_REQUESTS);
-							return;
-						}
-						currentState = State.READ_INITIAL;
-					}
-					case READ_INITIAL: {
-						nextState = this.readRequestLine(buf);
-						if (nextState == null) {
-							return;
-						}
-					}
-					case READ_HEADER: {
-						nextState = readHeaders(buf);
-						if (nextState == null) {
-							return;
-						}
-						currentState = nextState;
-						if (nextState == State.READ_FIXED_LENGTH_CONTENT) {
-							chunkSize = contentLength;
-						}
-						this.configRequest();
-					}
-					case READ_VARIABLE_LENGTH_CONTENT: {
-						if (buf.readable()) {
-							this.requestBodyRead(buf);
-						}
+				if (currentState == HTTP_STATE_SKIP_CONTROL_CHARS) {
+					if (!this.doSkipControlChars(buf)) {
+						this.addKeepAliveCheck();
 						return;
 					}
-					case READ_FIXED_LENGTH_CONTENT: {
-						if (chunkSize == 0) {
-							if (buf.readable()) {
-								this.cacheBuffer = buf.retain();
-							}
-							this.requestInvoke();
-							return;
-						} else {
-							long nr = buf.readableBytes();
-							if (nr > chunkSize) {
-								InputBuf dbuf = buf.duplicate((int) chunkSize);
-								this.requestBodyRead(dbuf);
-								dbuf.release();
-								buf.skipBytes((int) chunkSize);
-								this.requestInvoke();
-								this.cacheBuffer = buf.retain();
-								return;
-							} else {
-								this.request.requestExecutor.requestBody(request, buf);
-								chunkSize -= nr;
-							}
-						}
+				}
+				if (currentState == HTTP_STATE_READ_INITIAL) {
+					if (!this.doReadRequestLine(buf)) {
+						this.addKeepAliveCheck();
+						return;
 					}
-					case READ_CHUNK_SIZE: {
-						int lineSize = lineParser.parseLine(buf);
-						if (lineSize < 0) {
-							return;
-						} else if (lineSize >= lineParser.maxLength) {
-							this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
-							return;
-						}
-						this.chunkSize = lineParser.getChunkSize(lineSize);
-						if (chunkSize == Integer.MIN_VALUE) {
-							this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
-							return;
-						}
-						if (chunkSize == 0) {
-							if (buf.readable()) {
-								this.cacheBuffer = buf.retain();
-							}
-							this.requestInvoke();
-						} else {
-							currentState = State.READ_CHUNKED_CONTENT;
-						}
+				}
+				if (currentState == HTTP_STATE_READ_HEADER) {
+					if (!this.doReadHeaders(buf)) {
+						this.addKeepAliveCheck();
+						return;
 					}
-					case READ_CHUNKED_CONTENT: {
-						assert chunkSize <= Integer.MAX_VALUE;
-						long nr = buf.readableBytes();
-						if (nr > chunkSize) {
-							InputBuf dbuf = buf.duplicate((int) chunkSize);
-							this.requestBodyRead(dbuf);
-							dbuf.release();
-							buf.skipBytes((int) chunkSize);
-							this.currentState = State.READ_CHUNK_DELIMITER;
-						} else if (nr > 0) {
-							this.requestBodyRead(buf);
-							chunkSize -= nr;
-							if (chunkSize == 0) {
-								this.currentState = State.READ_CHUNK_DELIMITER;
-								return;
-							}
-						}
+				}
+				if (currentState == HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT) {
+					if (buf.readable()) {
+						InputBuf ibuf = buf.slice();
+						this.requestBodyRead(ibuf);
+						ibuf.release();
+						buf.skipAllBytes();
 					}
-					case READ_CHUNK_DELIMITER: {
-						while (buf.readable()) {
-							if (buf.readByte() == 10) {
-								currentState = State.READ_CHUNK_SIZE;
-								break;
-							}
-						}
-						if (currentState == State.READ_CHUNK_DELIMITER) {
-							return;
-						}
+					this.addKeepAliveCheck();
+					return;
+				}
+				if (currentState == HTTP_STATE_READ_FIXED_LENGTH_CONTENT) {
+					if (!this.handleFixLenthRead(buf)) {
+						this.addKeepAliveCheck();
+						return;
 					}
+				}
+				if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT
+						|| currentState == HTTP_STATE_READ_CHUNK_DELIMITER
+						|| currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
+					if (!this.readInChunked(buf)) {
+						this.addKeepAliveCheck();
+						return;
+					}
+				}
+
+				if (currentState == HTTP_STATE_INVOKING) {
+					int unReadSize = buf.readableBytes();
+					if (unReadSize > 0) {
+						this.inputCache.offer(buf.retain(), unReadSize);
+					}
+					this.cleanOpRead();
+					return;
+				}
+				if (currentState == HTTP_STATE_IGNORE) {
+					return;
 				}
 			}
 		} else {
+			this.cleanOpRead();
 			this.handleCloseInput();
 		}
 	}
 
 	protected void handleCloseInput() {
 		switch (currentState) {
-			case SKIP_CONTROL_CHARS: {
+			case HTTP_STATE_SKIP_CONTROL_CHARS: {
 				this.write(EmptyBuf.INSTANCE, closeTask);
+				break;
 			}
-			case READ_INITIAL: {
+			case HTTP_STATE_READ_INITIAL: {
 				this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
+				break;
 			}
-			case READ_HEADER: {
+			case HTTP_STATE_READ_HEADER: {
 				this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
+				break;
 			}
-			case READ_VARIABLE_LENGTH_CONTENT: {
+			case HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT: {
 				this.requestInvoke();
+				break;
 			}
-			case READ_FIXED_LENGTH_CONTENT:
-			case READ_CHUNK_SIZE:
-			case READ_CHUNKED_CONTENT:
-			case READ_CHUNK_DELIMITER: {
+			case HTTP_STATE_READ_FIXED_LENGTH_CONTENT:
+			case HTTP_STATE_READ_CHUNK_SIZE:
+			case HTTP_STATE_READ_CHUNKED_CONTENT:
+			case HTTP_STATE_READ_CHUNK_DELIMITER:
+			case HTTP_STATE_READ_CHUNK_FOOTER: {
 				this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_CLIENT_CLOSE);
+				break;
 			}
+			case HTTP_STATE_INVOKING: {
+				this.inputCache.offer(EmptyBuf.INSTANCE, -1);
+				break;
+			}
+			// case HTTP_STATE_IGNORE:{
+			// this.write(EmptyBuf.INSTANCE, closeTask);
+			// break;
+			// }
 		}
 	}
 
@@ -713,13 +886,19 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 			return this.hash;
 		}
 
-		public void doAfterHeaderParse() {
-			this.response.requestKeepAlive = this.headers.isKeepAlive();
-		}
-
 		@Override
 		public void setRequestExecutor(RequestExecutor builder) {
 			this.requestExecutor = builder;
+		}
+
+		@Override
+		public void abort() {
+			if (response.state == HttpResponse.STATE_INIT) {
+				handleInternalException(new RuntimeException("service abort"));
+				IGRONE_EXECUTOR.execute(request, response);
+			} else {
+				close();
+			}
 		}
 
 		@Override
@@ -777,7 +956,9 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		}
 
 		@Override
-		public void flush(InputBuf buf, AsyncTask task) {
+		public void flush(InputBuf buf, TaskCompletionHandler task) {
+			assert task != null;
+			assert buf != null;
 			if (state == STATE_INIT) {
 				OutputBuf obuf = this.sendResponseLineAndHeader();
 				write(obuf.input());
@@ -786,17 +967,21 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
-			if (task == null) {
-				task = (this.requestKeepAlive && this.hrs.isKeepAlive()) ? beginRead : closeTask;
-			} else {
-				task = new ResponseCloseTask(this.requestKeepAlive && this.hrs.isKeepAlive(), task);
+			state = STATE_SENDED;
+			write(buf, new ResponseCloseTask(this.requestKeepAlive && this.hrs.isKeepAlive(), task));
+		}
+
+		@Override
+		public void flush(InputBuf buf) {
+			if (state == STATE_INIT) {
+				OutputBuf obuf = this.sendResponseLineAndHeader();
+				write(obuf.input());
+				obuf.release();
+			} else if (state == STATE_SENDED) {
+				throw new IllegalStateException();
 			}
-			if (buf.readable()) {
-				write(buf, task);
-			} else {
-				buf.release();
-				write(EmptyBuf.INSTANCE, task);
-			}
+			state = STATE_SENDED;
+			write(buf, (this.requestKeepAlive && this.hrs.isKeepAlive()) ? beginRead : closeTask);
 		}
 
 		@Override
@@ -843,57 +1028,45 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 	}
 
 	public void keepAliveTimeout() {
-		this.closeJavaChannel();
+		this.close();
 	}
 
-	protected class ResponseCloseTask implements AsyncTask {
+	protected class ResponseCloseTask implements TaskCompletionHandler {
 		protected boolean keepAlive;
-		protected AsyncTask task;
+		protected TaskCompletionHandler task;
 
-		public ResponseCloseTask(boolean keepAlive, AsyncTask task) {
+		public ResponseCloseTask(boolean keepAlive, TaskCompletionHandler task) {
 			this.keepAlive = keepAlive;
 			this.task = task;
 		}
 
 		@Override
-		public void execute(AsyncExecutor executor) throws Throwable {
-		}
-
-		@Override
 		public void completed(AsyncExecutor executor) {
+			try {
+				task.completed(executor);
+			} catch (Throwable e) {
+				// Ignore
+			}
 			if (keepAlive) {
-				addKeepAliveCheck();
+				beginRead();
 			} else {
 				close();
 			}
-			if (task != null) {
-				task.completed(executor);
-			}
 		}
 
 		@Override
 		public void failed(Throwable exc, AsyncExecutor executor) {
-		}
-
-		@Override
-		public void cancled(AsyncExecutor executor) {
-			removeKeepAliveCheck();
-			if (task != null) {
-				task.cancled(executor);
+			try {
+				this.task.failed(exc, executor);
+			} catch (Throwable e) {
+				// Ignore
 			}
-
 		}
-
 	}
 
-	protected final AsyncTask closeTask = new AsyncTask() {
-
+	protected final TaskCompletionHandler closeTask = new TaskCompletionHandler() {
 		@Override
 		public void failed(Throwable exc, AsyncExecutor executor) {
-		}
-
-		@Override
-		public void execute(AsyncExecutor executor) throws Throwable {
 		}
 
 		@Override
@@ -901,28 +1074,15 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 			close();
 		}
 
-		@Override
-		public void cancled(AsyncExecutor executor) {
-		}
 	};
-	protected final AsyncTask beginRead = new AsyncTask() {
-		@Override
-		public void execute(AsyncExecutor executor) throws Throwable {
-		}
-
+	protected final TaskCompletionHandler beginRead = new TaskCompletionHandler() {
 		@Override
 		public void completed(AsyncExecutor executor) {
-			
 			beginRead();
-
 		}
 
 		@Override
 		public void failed(Throwable exc, AsyncExecutor executor) {
-		}
-
-		@Override
-		public void cancled(AsyncExecutor executor) {
 		}
 	};
 
@@ -932,6 +1092,10 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 
 		@Override
 		public void requestBody(HttpRequest request, InputBuf buf) {
+			int i = buf.readableBytes();
+			if (i > 0) {
+				buf.skipBytes(i);
+			}
 		}
 
 		@Override
@@ -947,4 +1111,10 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> {
 		public void error(HttpRequest request, int code) {
 		}
 	};
+
+	@Override
+	public long getKeepAliveTime() {
+		return this.keepAliveTimeout;
+	}
+
 }

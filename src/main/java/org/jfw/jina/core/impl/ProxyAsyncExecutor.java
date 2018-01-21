@@ -4,12 +4,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
-import org.jfw.jina.util.concurrent.AbstractAsyncExecutorGroup;
-import org.jfw.jina.util.concurrent.AsyncExecutorGroup;
 
 public  class ProxyAsyncExecutor extends Thread implements AsyncExecutor {
 
+	@SuppressWarnings("unchecked")
 	public static <T extends AsyncExecutor> T executor() {
 		Thread thread = Thread.currentThread();
 		if (thread instanceof ProxyAsyncExecutor) {
@@ -21,7 +21,8 @@ public  class ProxyAsyncExecutor extends Thread implements AsyncExecutor {
 	private static final AtomicIntegerFieldUpdater<ProxyAsyncExecutor> STARTED_UPDATER = AtomicIntegerFieldUpdater.newUpdater(ProxyAsyncExecutor.class,
 			"started");
 
-	private int started = 0;
+	@SuppressWarnings("unused")
+	private  volatile int started = 0;
 
 	private volatile AsyncExecutor groupChildren[];
 	private volatile int idxInGroupChildren;

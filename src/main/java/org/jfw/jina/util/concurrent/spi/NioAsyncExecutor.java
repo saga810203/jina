@@ -11,25 +11,25 @@ import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jfw.jina.buffer.BufAllocator;
 import org.jfw.jina.buffer.OutputBuf;
+import org.jfw.jina.core.AsyncChannel;
 import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.util.ReflectionUtil;
-import org.jfw.jina.util.concurrent.AsyncChannel;
-import org.jfw.jina.util.concurrent.AsyncExecutorGroup;
 import org.jfw.jina.util.concurrent.SystemPropertyUtil;
 
-public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable {
+public class NioAsyncExecutor extends AbstractAsyncExecutor{
 
-	private static final boolean DISABLE_KEYSET_OPTIMIZATION = SystemPropertyUtil.getBoolean("org.jfw.jina.util.concurrent.spi.NioAsyncExecutor", false);
-	private static final long SCHEDULE_PURGE_INTERVAL = SystemPropertyUtil.getLong("org.jfw.jina.util.concurrent.spi.SCHEDULE_PURGE_INTERVAL",
-			TimeUnit.SECONDS.toNanos(1));
+	private static final boolean DISABLE_KEYSET_OPTIMIZATION = SystemPropertyUtil
+			.getBoolean("org.jfw.jina.util.concurrent.spi.NioAsyncExecutor", false);
+	private static final long SCHEDULE_PURGE_INTERVAL = SystemPropertyUtil
+			.getLong("org.jfw.jina.util.concurrent.spi.SCHEDULE_PURGE_INTERVAL", TimeUnit.SECONDS.toNanos(1));
 	private static final int MIN_PREMATURE_SELECTOR_RETURNS = 3;
 	private static final int SELECTOR_AUTO_REBUILD_THRESHOLD;
 
@@ -59,19 +59,21 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 	private Selector unwrappedSelector;
 	private SelectedSelectionKeySet selectedKeys;
 
-	private volatile int ioRatio = 50;
+	private volatile int ioRatio = 100;
 	private boolean needsToSelectAgain;
 
 	private final SelectorProvider provider;
-	
+
 	protected BufAllocator alloc;
 
-	public BufAllocator alloc(){
+	public BufAllocator alloc() {
 		return alloc;
 	}
-	public OutputBuf allocBuffer(){
+
+	public OutputBuf allocBuffer() {
 		return alloc.buffer();
 	}
+
 	private Selector openSelector() {
 		final Selector unwrappedSelector;
 		try {
@@ -91,21 +93,23 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 			@Override
 			public Object run() {
 				try {
-					return Class.forName("sun.nio.ch.SelectorImpl", false, System.getSecurityManager() == null ? ClassLoader.getSystemClassLoader()
-							: AccessController.doPrivileged(new PrivilegedAction<ClassLoader>() {
-								@Override
-								public ClassLoader run() {
-									return ClassLoader.getSystemClassLoader();
-								}
-							}));
+					return Class.forName("sun.nio.ch.SelectorImpl", false,
+							System.getSecurityManager() == null ? ClassLoader.getSystemClassLoader()
+									: AccessController.doPrivileged(new PrivilegedAction<ClassLoader>() {
+										@Override
+										public ClassLoader run() {
+											return ClassLoader.getSystemClassLoader();
+										}
+									}));
 				} catch (Throwable cause) {
 					return cause;
 				}
 			}
 		});
 
-		if (!(maybeSelectorImplClass instanceof Class) || !((Class<?>) maybeSelectorImplClass).isAssignableFrom(unwrappedSelector.getClass())) {
-			this.unwrappedSelector =unwrappedSelector;
+		if (!(maybeSelectorImplClass instanceof Class)
+				|| !((Class<?>) maybeSelectorImplClass).isAssignableFrom(unwrappedSelector.getClass())) {
+			this.unwrappedSelector = unwrappedSelector;
 			return unwrappedSelector;
 		}
 
@@ -143,13 +147,13 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 			// Exception e = (Exception) maybeException;
 			// logger.trace("failed to instrument a special java.util.Set
 			// into:{}", unwrappedSelector, e);
-			this.unwrappedSelector =unwrappedSelector;
+			this.unwrappedSelector = unwrappedSelector;
 			return unwrappedSelector;
 		}
 		selectedKeys = selectedKeySet;
 		// logger.trace("instrumented a special java.util.Set into: {}",
 		// unwrappedSelector);
-		this.unwrappedSelector =unwrappedSelector;
+		this.unwrappedSelector = unwrappedSelector;
 		return new SelectedSelectionKeySetSelector(unwrappedSelector, selectedKeySet);
 	}
 
@@ -161,11 +165,10 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 	 */
 	private final AtomicBoolean wakenUp = new AtomicBoolean();
 
-	public NioAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, SelectorProvider selectorProvider,Map<Object,Object> reses) {
+	public NioAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, SelectorProvider selectorProvider) {
 		super(group, closeTask);
 		this.provider = selectorProvider;
 		selector = openSelector();
-		this.objCache .putAll(reses);
 	}
 
 	int selectNow() throws IOException {
@@ -184,8 +187,8 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 			int selectCnt = 0;
 			Long nextScheduleTime = this.nextScheduleDeadLine();
 			long currentTimeNanos = System.nanoTime();
-			long selectDeadLineNanos = currentTimeNanos
-					+ (nextScheduleTime!=null ? Math.max(0, nextScheduleTime - (currentTimeNanos - START_TIME)) : SCHEDULE_PURGE_INTERVAL);
+			long selectDeadLineNanos = currentTimeNanos + (nextScheduleTime != null
+					? Math.max(0, nextScheduleTime - (currentTimeNanos - START_TIME)) : SCHEDULE_PURGE_INTERVAL);
 			for (;;) {
 				long timeoutMillis = (selectDeadLineNanos - currentTimeNanos + 500000L) / 1000000L;
 				if (timeoutMillis <= 0) {
@@ -277,6 +280,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 		}
 	}
 
+	private boolean netProcessing = false;
 	public void handleRunningTask() {
 		try {
 			if (runningTasks.isEmpty()) {
@@ -291,15 +295,19 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 			final int ioRatio = this.ioRatio;
 			if (ioRatio == 100) {
 				try {
+					netProcessing = true;
 					processSelectedKeys();
 				} finally {
+					netProcessing = false;
 					runRunningTasks();
 				}
 			} else {
 				final long ioStartTime = System.nanoTime();
 				try {
+					netProcessing = true;
 					processSelectedKeys();
 				} finally {
+					netProcessing = false;
 					final long ioTime = System.nanoTime() - ioStartTime;
 					runRunningTasks(ioTime * (100 - ioRatio) / ioRatio);
 				}
@@ -309,6 +317,13 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor implements Runnable 
 		}
 	}
 
+	public void nextRuning(AsyncTask task){
+		if(netProcessing){
+			runningTasks.offer(task);
+		}else{
+			this.submitInLoop(task);
+		}
+	}
 	private void processSelectedKeys() {
 		if (selectedKeys != null) {
 			processSelectedKeysOptimized();
