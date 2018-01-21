@@ -8,11 +8,11 @@ import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.core.AsyncTaskAdapter;
+import org.jfw.jina.core.impl.NioAsyncExecutor;
 import org.jfw.jina.http.KeepAliveCheck;
 import org.jfw.jina.http.util.DateFormatter;
 import org.jfw.jina.util.DQueue;
 import org.jfw.jina.util.Matcher;
-import org.jfw.jina.util.concurrent.spi.NioAsyncExecutor;
 
 public class HttpAsyncExecutor extends NioAsyncExecutor {
 

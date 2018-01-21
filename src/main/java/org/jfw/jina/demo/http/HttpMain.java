@@ -8,9 +8,9 @@ import java.util.Map;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.core.impl.AbstractAsyncServerChannel;
+import org.jfw.jina.core.impl.NioAsyncExecutorGroup;
 import org.jfw.jina.http.server.HttpAsyncExecutor;
 import org.jfw.jina.http.server.HttpChannel;
-import org.jfw.jina.util.concurrent.spi.NioAsyncExecutorGroup;
 
 public class HttpMain {
 

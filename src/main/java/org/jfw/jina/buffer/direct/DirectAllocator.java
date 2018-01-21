@@ -6,7 +6,7 @@ import org.jfw.jina.buffer.BufAllocator;
 import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.Relier;
-import org.jfw.jina.util.concurrent.spi.AbstractAsyncExecutor;
+import org.jfw.jina.core.impl.AbstractAsyncExecutor;
 
 public class DirectAllocator implements BufAllocator {
 	private final AbstractAsyncExecutor executor;

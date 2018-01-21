@@ -14,7 +14,6 @@ import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.TagQueue.TagNode;
 import org.jfw.jina.util.TagQueue.TagQueueHandler;
-import org.jfw.jina.util.concurrent.spi.NioAsyncExecutor;
 
 public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements AsyncChannel {
 	protected T executor;

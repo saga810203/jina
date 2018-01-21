@@ -13,7 +13,6 @@ import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.util.concurrent.SystemPropertyUtil;
-import org.jfw.jina.util.concurrent.spi.NioAsyncExecutor;
 
 public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 	@SuppressWarnings("rawtypes")

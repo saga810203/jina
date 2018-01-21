@@ -1,4 +1,4 @@
-package org.jfw.jina.util.concurrent.spi;
+package org.jfw.jina.core.impl;
 
 import java.nio.channels.SelectionKey;
 import java.util.AbstractSet;

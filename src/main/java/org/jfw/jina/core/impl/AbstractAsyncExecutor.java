@@ -1,4 +1,4 @@
-package org.jfw.jina.util.concurrent.spi;
+package org.jfw.jina.core.impl;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -11,7 +11,6 @@ import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.core.AsyncTaskAdapter;
-import org.jfw.jina.core.impl.ProxyAsyncExecutor;
 import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.Matcher;
 import org.jfw.jina.util.Queue;
