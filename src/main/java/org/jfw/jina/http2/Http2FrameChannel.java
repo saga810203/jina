@@ -1,7 +1,6 @@
 package org.jfw.jina.http2;
 
 import static io.netty.handler.codec.http2.Http2Error.PROTOCOL_ERROR;
-import static io.netty.handler.codec.http2.Http2Exception.connectionError;
 import static io.netty.handler.codec.http2.Http2Exception.streamError;
 
 import java.nio.channels.SocketChannel;
@@ -12,22 +11,19 @@ import org.jfw.jina.http.KeepAliveCheck;
 import org.jfw.jina.http.server.HttpAsyncExecutor;
 import org.jfw.jina.util.DQueue.DNode;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.handler.codec.http2.Http2Exception;
-import io.netty.handler.codec.http2.Http2FrameListener;
-import io.netty.handler.codec.http2.DefaultHttp2FrameReader.HeadersBlockBuilder;
-import io.netty.handler.codec.http2.DefaultHttp2FrameReader.HeadersContinuation;
-
 import org.jfw.jina.util.Queue;
 import org.jfw.jina.util.impl.QueueProviderImpl.LinkedNode;
 import org.jfw.jina.util.impl.QueueProviderImpl.LinkedQueue;
 
-public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecutor> implements KeepAliveCheck {
+public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecutor>
+		implements KeepAliveCheck, Http2FrameListener {
 
 	protected Http2FrameChannel(HttpAsyncExecutor executor, SocketChannel javaChannel) {
 		super(executor, javaChannel);
 
 		this.framePayload = executor.newQueue();
+		this.headersPayload = executor.newQueue();
+		this.datePayload = executor.newQueue();
 	}
 
 	public static final int FRAME_CONFIG_HEADER_SIZE = 9;
@@ -53,6 +49,8 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 
 	public static final int DEFAULT_MAX_FRAME_SIZE = 0x4000;
 
+	public static final long INVALID_STREAM_ID = Long.MIN_VALUE;
+
 	protected int frameConfigMaxSize = 0x4000;
 
 	protected byte[] frameHeaderBuffer = new byte[9];
@@ -66,8 +64,10 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 	protected Queue framePayload;
 	protected int payloadIndex = 0;
 
-	protected boolean headerProcessing = false;
-	protected long streamIdOfProcessingHeader = 0;
+	protected Queue headersPayload;
+	protected Queue datePayload;
+	// protected boolean headerProcessing = false;
+	protected long streamIfOfHeaders = INVALID_STREAM_ID;
 
 	private byte currentState = FRAME_STATE_READ_HEADER;
 
@@ -124,7 +124,6 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 		if (this.payloadIndex == this.payloadLength) {
 			this.payloadIndex = 0;
 			this.currentState = FRAME_STATE_READ_HEADER;
-
 			if (frameType == FRAME_TYPE_DATA) {
 				handleDataFrame();
 			} else if (frameType == FRAME_TYPE_HEADERS) {
@@ -159,75 +158,109 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 
 	}
 
-	protected  void handleHeadersFrame(){
-		   final int padding = readPadding();
-		   if(padding!=0){
-			   payloadLength -=(padding-1);
-		   }
-	        if (payloadLength < 0) {
-	           this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
-	           this.framePayload.clear(RELEASE_INPUT_BUF);
-	           return;
-	        }
-		if(Http2FlagsUtil.priorityPresent(frameFlag)){
-			this.readCacheBytes(4);
-			this.payloadLength-=4;
-			
-			int tmpInt =  ((this.frameHeaderBuffer[0]     & 0xff) << 24) |
-		                ((this.frameHeaderBuffer[2] & 0xff) << 16) |
-		                ((this.frameHeaderBuffer[3] & 0xff) <<  8) |
-		                		(this.frameHeaderBuffer[4] & 0xff);
-			long word1 = tmpInt & 0xFFFFFFFFL;
-			 final boolean exclusive = (word1 & 0x80000000L) != 0;
-			 final int streamDependency = (int) (word1 & 0x7FFFFFFFL);
-			 if (streamDependency == streamId) {
-				 //TODO impl			 
-//	                throw streamError(streamId, PROTOCOL_ERROR, "A stream cannot depend on itself.");
-	         }
-			 final short weight = (short) (this.readUByteInPL() + 1);
-			 --payloadLength;
-			 this.changePayloadSize(payloadLength);
-			 
+	private void slicePayload(int length,Queue dest) {
+		for (;;) {
+			InputBuf buf = (InputBuf) this.framePayload.poll();
+			assert buf != null;
+			int nr = buf.readableBytes();
+			if (length >= nr) {
+				dest.offer(buf);
+				length -= nr;
+				if (length == 0) {
+					return;
+				}
+			} else {
+				dest.offer(buf.duplicate(length));
+				buf.release();
+				return;
+			}
 		}
-		
-		
-		//////////////////////
-        if (flags.priorityPresent()) {
-            long word1 = payload.readUnsignedInt();
-            final boolean exclusive = (word1 & 0x80000000L) != 0;
-            final int streamDependency = (int) (word1 & 0x7FFFFFFFL);
-            if (streamDependency == streamId) {
-                throw streamError(streamId, PROTOCOL_ERROR, "A stream cannot depend on itself.");
-            }
-            final short weight = (short) (payload.readUnsignedByte() + 1);
-            final ByteBuf fragment = payload.readSlice(lengthWithoutTrailingPadding(payload.readableBytes(), padding));
-
-            // Create a handler that invokes the listener when the header block is complete.
-            headersContinuation = new HeadersContinuation() {
-                @Override
-                public int getStreamId() {
-                    return headersStreamId;
-                }
-
-                @Override
-                public void processFragment(boolean endOfHeaders, ByteBuf fragment,
-                        Http2FrameListener listener) throws Http2Exception {
-                    final HeadersBlockBuilder hdrBlockBuilder = headersBlockBuilder();
-                    hdrBlockBuilder.addFragment(fragment, ctx.alloc(), endOfHeaders);
-                    if (endOfHeaders) {
-                        listener.onHeadersRead(ctx, headersStreamId, hdrBlockBuilder.headers(), streamDependency,
-                                weight, exclusive, padding, headersFlags.endOfStream());
-                    }
-                }
-            };
-
-            // Process the initial fragment, invoking the listener's callback if end of headers.
-            headersContinuation.processFragment(flags.endOfHeaders(), fragment, listener);
-            resetHeadersContinuationIfEnd(flags.endOfHeaders());
-            return;
 	}
 
-	protected abstract void handlePriorityFrame();
+	protected void handleHeadersFrame() {
+		this.streamIfOfHeaders = this.streamId;
+		boolean hasPadding = Http2FlagsUtil.paddingPresent(frameFlag);
+		boolean endOfHeaders = Http2FlagsUtil.endOfHeaders(frameFlag);
+		int padding = 0;
+		if (hasPadding) {
+			padding = this.readUByteInPL();
+			--payloadLength;
+		}
+
+		if (payloadLength < padding) {
+			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
+			this.framePayload.clear(RELEASE_INPUT_BUF);
+			return;
+		}
+
+		if (Http2FlagsUtil.priorityPresent(frameFlag)) {
+			this.readCacheBytes(4);
+			long word1 = (((this.frameHeaderBuffer[0] & 0xff) << 24) | ((this.frameHeaderBuffer[2] & 0xff) << 16)
+					| ((this.frameHeaderBuffer[3] & 0xff) << 8) | (this.frameHeaderBuffer[4] & 0xff)) & 0xFFFFFFFFL;
+			;
+			payloadLength -= 4;
+
+			final boolean exclusive = (word1 & 0x80000000L) != 0;
+			final int streamDependency = (int) (word1 & 0x7FFFFFFFL);
+			if (streamDependency == streamId) {
+				// TODO impl
+				// throw streamError(streamId, PROTOCOL_ERROR, "A stream cannot
+				// depend on itself.");
+			}
+			final short weight = (short) (this.readUByteInPL() + 1);
+			--payloadLength;
+
+			if (padding != 0) {
+				int rpll = payloadLength - padding;
+				if (rpll > 0)
+					this.slicePayload(rpll,this.headersPayload);
+				this.framePayload.clear(RELEASE_INPUT_BUF);
+			} else {
+				if (payloadLength > 0) {
+					this.framePayload.offerTo(this.headersPayload);
+				}
+			}
+			if (endOfHeaders) {
+				onHeadersRead(streamDependency, weight, exclusive);
+				this.streamIfOfHeaders = INVALID_STREAM_ID;
+			}
+			return;
+		}
+		if (padding != 0) {
+			int rpll = payloadLength - padding;
+			if (rpll > 0)
+				this.slicePayload(rpll,this.headersPayload);
+			this.framePayload.clear(RELEASE_INPUT_BUF);
+		} else {
+			if (payloadLength > 0) {
+
+				this.framePayload.offerTo(this.headersPayload);
+
+			}
+		}
+		if (endOfHeaders) {
+			onHeadersRead();
+			this.streamIfOfHeaders = INVALID_STREAM_ID;
+			this.streamIfOfHeaders = INVALID_STREAM_ID;
+		}
+	}
+
+	protected  void handlePriorityFrame(){
+		this.readCacheBytes(4);
+		long word1 = (((this.frameHeaderBuffer[0] & 0xff) << 24) | ((this.frameHeaderBuffer[2] & 0xff) << 16)
+				| ((this.frameHeaderBuffer[3] & 0xff) << 8) | (this.frameHeaderBuffer[4] & 0xff)) & 0xFFFFFFFFL;
+		;
+		payloadLength -= 4;
+
+		final boolean exclusive = (word1 & 0x80000000L) != 0;
+		final int streamDependency = (int) (word1 & 0x7FFFFFFFL);
+        if (streamDependency == streamId) {
+          //TODO impl  throw streamError(streamId, PROTOCOL_ERROR, "A stream cannot depend on itself.");
+        }
+        final short weight = (short) (this.readUByteInPL() + 1);
+        assert this.framePayload.isEmpty();
+        onPriorityRead(streamDependency, weight, exclusive);
+	}
 
 	protected abstract void handleRstStreamFrame();
 
@@ -253,15 +286,16 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 		if (this.frameHeaderIndex == FRAME_CONFIG_HEADER_SIZE) {
 			this.frameHeaderIndex = 0;
 
-			this.payloadLength = (this.frameHeaderBuffer[0] & 0xff) << 16 | ((frameHeaderBuffer[1] & 0xff) << 8) | (frameHeaderBuffer[2] & 0xff);
+			this.payloadLength = (this.frameHeaderBuffer[0] & 0xff) << 16 | ((frameHeaderBuffer[1] & 0xff) << 8)
+					| (frameHeaderBuffer[2] & 0xff);
 			if (payloadLength > this.frameConfigMaxSize) {
 				this.currentState = Http2ProtocolError.ERROR_MAX_FRAME_SIZE;
 				return true;
 			}
 			frameType = this.frameHeaderBuffer[3];
 			this.frameFlag = this.frameHeaderBuffer[4];
-			streamId = ((frameHeaderBuffer[5] & 0x7f) << 24 | (frameHeaderBuffer[6] & 0xff) << 16 | (frameHeaderBuffer[7] & 0xff) << 8
-					| frameHeaderBuffer[8] & 0xff);
+			streamId = ((frameHeaderBuffer[5] & 0x7f) << 24 | (frameHeaderBuffer[6] & 0xff) << 16
+					| (frameHeaderBuffer[7] & 0xff) << 8 | frameHeaderBuffer[8] & 0xff);
 
 			this.currentState = FRAME_STATE_READ_DATA;
 			if (frameType == FRAME_TYPE_DATA)
@@ -303,13 +337,13 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 			return;
 		}
 
-		if (!this.headerProcessing) {
+		if (this.streamIfOfHeaders == INVALID_STREAM_ID) {
 
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION_NOT;
 			return;
 		}
 
-		if (streamId != this.streamIdOfProcessingHeader) {
+		if (streamId != this.streamIfOfHeaders) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_STREAM_ID_WITH_CONTINUATION;
 			return;
 		}
@@ -321,7 +355,7 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 	}
 
 	private void verifyWindowUpdateFrame() {
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
@@ -334,7 +368,7 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 	}
 
 	private void verifyGoAwayFrame() {
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
@@ -349,7 +383,7 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 	}
 
 	private void verifyPingFrame() {
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
@@ -368,7 +402,7 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 	}
 
 	private void verifySettingsFrame() {
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
@@ -391,7 +425,7 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 			this.currentState = Http2ProtocolError.ERROR_FRAME_NOT_ASSOCIATED_STREAM;
 			return;
 		}
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
@@ -407,7 +441,7 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 			this.currentState = Http2ProtocolError.ERROR_FRAME_NOT_ASSOCIATED_STREAM;
 			return;
 		}
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
@@ -423,11 +457,12 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 			this.currentState = Http2ProtocolError.ERROR_FRAME_NOT_ASSOCIATED_STREAM;
 			return;
 		}
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
-		if (payloadLength < (Http2FlagsUtil.getNumPriorityBytes(this.frameFlag)) + Http2FlagsUtil.getPaddingPresenceFieldLength(this.frameFlag)) {
+		if (payloadLength < (Http2FlagsUtil.getNumPriorityBytes(this.frameFlag))
+				+ Http2FlagsUtil.getPaddingPresenceFieldLength(this.frameFlag)) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
 			return;
 		}
@@ -441,7 +476,7 @@ public abstract class Http2FrameChannel extends NioAsyncChannel<HttpAsyncExecuto
 			this.currentState = Http2ProtocolError.ERROR_FRAME_NOT_ASSOCIATED_STREAM;
 			return;
 		}
-		if (this.headerProcessing) {
+		if (this.streamIfOfHeaders != INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
