@@ -27,8 +27,7 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 	private final DQueue keepAliveQueue;
 	private final long keepAliveTimeout;
 	private final long keepAliveCheckRate;	
-	public HttpAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, AsyncExecutor[] groupChildren,
-			int idxInGroupChildren, SelectorProvider selectorProvider) {
+	public HttpAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, SelectorProvider selectorProvider) {
 		super(group, closeTask,selectorProvider);
 		Object tmp = group.getParameter("http.keepAliveConfig");
 		KeepAliveConfig kpcfg = (tmp != null && tmp instanceof KeepAliveConfig) ? (KeepAliveConfig) tmp : KEEP_ALIVE_CONFIG;

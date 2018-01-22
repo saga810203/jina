@@ -14,31 +14,21 @@ import org.jfw.jina.http.server.HttpChannel;
 
 public class HttpMain {
 
-	public static void main(String[] args) throws Exception {
+	public static void main(String[] args) throws Throwable {
 		NioAsyncExecutorGroup boss = new NioAsyncExecutorGroup(1);
 		NioAsyncExecutorGroup worker = new NioAsyncExecutorGroup() {
-
-			@Override
-			protected Map<Object, Object> buildResources() {
-				HashMap<Object, Object> ret = new HashMap<Object, Object>();
-				return ret;
-			}
-
-			protected AsyncExecutor newChild(Runnable closeTask) {
-				return new HttpAsyncExecutor(this, closeTask, SelectorProvider.provider(), this.buildResources());
+			public AsyncExecutor newChild(Runnable closeTask) {
+				return new HttpAsyncExecutor(this, closeTask, SelectorProvider.provider());
 			}
 		};
 
 		AbstractAsyncServerChannel server = new AbstractAsyncServerChannel(boss, worker) {
-
 			@Override
 			public void accectClient(final SocketChannel channel, final AsyncExecutor executor) {
-
 				executor.submit(new AsyncTask() {
 					@Override
 					public void completed(AsyncExecutor executor) {
 					}
-
 					@Override
 					public void failed(Throwable exc, AsyncExecutor executor) {
 						try {
@@ -49,7 +39,7 @@ public class HttpMain {
 
 					@Override
 					public void execute(AsyncExecutor executor) throws Throwable {
-						HttpChannel http = null;
+						HttpChannel http = new HttpChannel((HttpAsyncExecutor )executor, channel);
 						http.doRegister();
 					}
 
@@ -67,7 +57,7 @@ public class HttpMain {
 
 		};
 
-		server.start(address, backlog);
+		server.start(null, 5);
 	}
 
 }

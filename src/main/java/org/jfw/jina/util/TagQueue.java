@@ -7,6 +7,7 @@ public interface TagQueue extends Queue{
 	void clear(TagQueueMatcher matcher);
 	TagNode offer(Object item,Object tag);
     Object peekTag();
+	Object unsafePeekTag();
     TagNode peekTagNode();
     void removeWithTag(Matcher<Object> matcher);
     void offerToWithTag(Queue dest,Matcher<Object> matcher);	
@@ -25,4 +26,5 @@ public interface TagQueue extends Queue{
     public interface TagQueueMatcher{
     	boolean match(Object item,Object tag);
     }
+
 }

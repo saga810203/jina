@@ -17,9 +17,6 @@ public class NioAsyncExecutorGroup extends AbstractAsyncExecutorGroup {
 	public NioAsyncExecutorGroup() {
 		super(DEFAULT_EVENT_LOOP_THREADS);
 	}
-	protected Map<Object,Object> buildResources(){
-		return new HashMap<Object,Object>();
-	}
 
 	@Override
 	public AsyncExecutor newChild(Runnable closeTask) {

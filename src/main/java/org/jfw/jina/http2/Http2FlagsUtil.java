@@ -1,11 +1,11 @@
 package org.jfw.jina.http2;
 
 public final class Http2FlagsUtil {
-	public static final short END_STREAM = 0x1;
-	public static final short END_HEADERS = 0x4;
-	public static final short ACK = 0x1;
-	public static final short PADDED = 0x8;
-	public static final short PRIORITY = 0x20;
+	public static final byte END_STREAM = 0x1;
+	public static final byte END_HEADERS = 0x4;
+	public static final byte ACK = 0x1;
+	public static final byte PADDED = 0x8;
+	public static final byte PRIORITY = 0x20;
 
 	private Http2FlagsUtil() {
 	}
@@ -14,7 +14,7 @@ public final class Http2FlagsUtil {
 	 * Determines whether the {@link #END_STREAM} flag is set. Only applies to
 	 * DATA and HEADERS frames.
 	 */
-	public boolean endOfStream(short value) {
+	public static boolean endOfStream(byte value) {
 		return (value & END_STREAM) != 0;
 	}
 
@@ -22,7 +22,7 @@ public final class Http2FlagsUtil {
 	 * Determines whether the {@link #END_HEADERS} flag is set. Only applies for
 	 * HEADERS, PUSH_PROMISE, and CONTINUATION frames.
 	 */
-	public boolean endOfHeaders(short value) {
+	public static boolean endOfHeaders(byte value) {
 		return (value & END_HEADERS) != 0;
 	}
 
@@ -30,7 +30,7 @@ public final class Http2FlagsUtil {
 	 * Determines whether the flag is set indicating the presence of the
 	 * exclusive, stream dependency, and weight fields in a HEADERS frame.
 	 */
-	public boolean priorityPresent(short value) {
+	public static boolean priorityPresent(byte value) {
 		return (value & PRIORITY) != 0;
 	}
 
@@ -38,7 +38,7 @@ public final class Http2FlagsUtil {
 	 * Determines whether the flag is set indicating that this frame is an ACK.
 	 * Only applies for SETTINGS and PING frames.
 	 */
-	public boolean ack(short value) {
+	public static boolean ack(byte value) {
 		return (value & ACK) != 0;
 	}
 
@@ -47,7 +47,7 @@ public final class Http2FlagsUtil {
 	 * is present. Only applies to DATA, HEADERS, PUSH_PROMISE and CONTINUATION
 	 * frames.
 	 */
-	public boolean paddingPresent(short value) {
+	public static boolean paddingPresent(byte value) {
 		return (value & PADDED) != 0;
 	}
 
@@ -55,7 +55,7 @@ public final class Http2FlagsUtil {
 	 * Gets the number of bytes expected for the priority fields of the payload.
 	 * This is determined by the {@link #priorityPresent()} flag.
 	 */
-	public int getNumPriorityBytes(short value) {
+	public static int getNumPriorityBytes(byte value) {
 		return (value & PRIORITY) != 0 ? 5 : 0;
 	}
 
@@ -63,18 +63,18 @@ public final class Http2FlagsUtil {
 	 * Gets the length in bytes of the padding presence field expected in the
 	 * payload. This is determined by the {@link #paddingPresent()} flag.
 	 */
-	public int getPaddingPresenceFieldLength(short value) {
+	public static int getPaddingPresenceFieldLength(byte value) {
 		return (value & PADDED) != 0 ? 1 : 0;
 	}
 
 	/**
 	 * Sets the {@link #END_STREAM} flag.
 	 */
-	public short endOfStream(short value, boolean on) {
+	public static byte endOfStream(byte value, boolean on) {
 		if (on) {
-			return (short) (value | END_STREAM);
+			return (byte) (value | END_STREAM);
 		} else {
-			return (short) (value & ~END_STREAM);
+			return (byte) (value & ~END_STREAM);
 		}
 
 	}
@@ -82,11 +82,11 @@ public final class Http2FlagsUtil {
 	/**
 	 * Sets the {@link #END_HEADERS} flag.
 	 */
-	public short endOfHeaders(short value, boolean on) {
+	public static byte endOfHeaders(byte value, boolean on) {
 		if (on) {
-			return (short) (value | END_HEADERS);
+			return (byte) (value | END_HEADERS);
 		} else {
-			return (short) (value & ~END_HEADERS);
+			return (byte) (value & ~END_HEADERS);
 		}
 
 	}
@@ -94,33 +94,33 @@ public final class Http2FlagsUtil {
 	/**
 	 * Sets the {@link #PRIORITY} flag.
 	 */
-	public short priorityPresent(short value, boolean on) {
+	public static byte priorityPresent(byte value, boolean on) {
 		if (on) {
-			return (short) (value | PRIORITY);
+			return (byte) (value | PRIORITY);
 		} else {
-			return (short) (value & ~PRIORITY);
+			return (byte) (value & ~PRIORITY);
 		}
 	}
 
 	/**
 	 * Sets the {@link #PADDED} flag.
 	 */
-	public short paddingPresent(short value, boolean on) {
+	public static byte paddingPresent(byte value, boolean on) {
 		if (on) {
-			return (short) (value | PADDED);
+			return (byte) (value | PADDED);
 		} else {
-			return (short) (value & ~PADDED);
+			return (byte) (value & ~PADDED);
 		}
 	}
 
 	/**
 	 * Sets the {@link #ACK} flag.
 	 */
-	public short ack(short value, boolean on) {
+	public static byte ack(byte value, boolean on) {
 		if (on) {
-			return (short) (value | ACK);
+			return (byte) (value | ACK);
 		} else {
-			return (short) (value & ~ACK);
+			return (byte) (value & ~ACK);
 		}
 	}
 

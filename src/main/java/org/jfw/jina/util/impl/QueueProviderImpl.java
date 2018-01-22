@@ -14,8 +14,7 @@ import org.jfw.jina.util.concurrent.SystemPropertyUtil;
 
 public class QueueProviderImpl implements QueueProvider {
 
-	private static final int MAX_NUM_POOLED_NODE = SystemPropertyUtil
-			.getInt("org.jfw.jina.util.QueueProvider.MAX_NUM_POOLED_NODE", 1024 * 1024);
+	private static final int MAX_NUM_POOLED_NODE = SystemPropertyUtil.getInt("org.jfw.jina.util.QueueProvider.MAX_NUM_POOLED_NODE", 1024 * 1024);
 	private int numNode = 0;
 	private LinkedNode headOfProvider = new LinkedNode(null);
 
@@ -95,7 +94,7 @@ public class QueueProviderImpl implements QueueProvider {
 	}
 
 	public class LinkedQueue implements Queue {
-		private LinkedNode head;
+		public LinkedNode head;
 
 		private LinkedQueue() {
 			head = newDNode(null);
@@ -177,17 +176,27 @@ public class QueueProviderImpl implements QueueProvider {
 			freeNode(node);
 			return ret;
 		}
-		
+
 		@Override
-		public void shift() {
-			assert head.next!=null;
+		public void unsafeShift() {
+			assert head.next != null;
 			LinkedNode node = head.next;
 			head.next = node.next;
-			node.item =null;
-			if(node.next ==null){
+			node.item = null;
+			if (node.next == null) {
 				head.tag = head;
 			}
 			freeNode(node);
+		}
+
+		public Object unsafePeek() {
+			assert head.next != null;
+			return head.next.item;
+		}
+
+		public Object unsafePeekLast() {
+			assert head.tag != null;
+			return ((LinkedNode) head.tag).item;
 		}
 
 		@Override
@@ -302,11 +311,10 @@ public class QueueProviderImpl implements QueueProvider {
 			}
 		}
 
-
 	}
 
 	public class DeLinkedQueue implements DQueue {
-		private LinkedNode head;
+		public LinkedNode head;
 
 		private DeLinkedQueue() {
 			head = newDNode(null);
@@ -405,6 +413,17 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
+		public Object unsafePeek() {
+			assert head.next != null;
+			return head.next.item;
+		}
+
+		public Object unsafePeekLast() {
+			assert head.tag != null;
+			return ((LinkedNode) head.tag).item;
+		}
+
+		@Override
 		public Object poll() {
 			Object ret = null;
 			LinkedNode node = head.next;
@@ -424,14 +443,15 @@ public class QueueProviderImpl implements QueueProvider {
 			freeNode(node);
 			return ret;
 		}
+
 		@Override
-		public void shift() {
-			assert head.next!=null;
+		public void unsafeShift() {
+			assert head.next != null;
 			LinkedNode node = head.next;
 			head.next = node.next;
-			node.item =null;
+			node.item = null;
 			node.tag = null;
-			if(node.next ==null){
+			if (node.next == null) {
 				head.tag = head;
 			}
 			freeNode(node);
@@ -586,7 +606,7 @@ public class QueueProviderImpl implements QueueProvider {
 	}
 
 	public class TagLinkedQueue implements TagQueue {
-		private LinkedNode head;
+		public LinkedNode head;
 
 		private TagLinkedQueue() {
 			head = newDNode(null);
@@ -734,6 +754,23 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
+		public Object unsafePeek() {
+			assert head.next != null;
+			return head.next.item;
+		}
+
+		public Object unsafePeekLast() {
+			assert head.tag != null;
+			return ((LinkedNode) head.tag).item;
+		}
+
+		@Override
+		public Object unsafePeekTag() {
+			assert head.next != null;
+			return head.next.tag;
+		}
+
+		@Override
 		public Object poll() {
 			Object ret = null;
 			LinkedNode node = head.next;
@@ -751,18 +788,20 @@ public class QueueProviderImpl implements QueueProvider {
 			freeNode(node);
 			return ret;
 		}
+
 		@Override
-		public void shift() {
-			assert head.next!=null;
+		public void unsafeShift() {
+			assert head.next != null;
 			LinkedNode node = head.next;
 			head.next = node.next;
-			node.item =null;
+			node.item = null;
 			node.tag = null;
-			if(node.next ==null){
+			if (node.next == null) {
 				head.tag = head;
 			}
 			freeNode(node);
 		}
+
 		@Override
 		public void remove(Matcher<Object> matcher) {
 			assert matcher != null;

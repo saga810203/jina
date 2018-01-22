@@ -224,7 +224,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 					return;
 				}
 			}
-			outputCache.shift();
+			outputCache.unsafeShift();
 			if (task != null) {
 				task.completed(executor);
 			}

@@ -188,7 +188,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> implements K
 						int unReadSize = buf.readableBytes();
 						if (unReadSize == 0) {
 							buf.release();
-							inputCache.poll();
+							inputCache.unsafeShift();
 						}
 						return;
 					}
@@ -198,7 +198,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> implements K
 					}
 				}
 				buf.release();
-				inputCache.poll();
+				inputCache.unsafeShift();
 			} else {
 				this.inputCache.clear(RELEASE_INPUT_BUF);
 				this.handleCloseInput();

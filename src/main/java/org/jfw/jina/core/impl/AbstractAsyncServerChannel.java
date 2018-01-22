@@ -21,12 +21,12 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 	private static final int STATE_STARTING = 1;
 	private static final int STATE_STARTED = 2;
 	private static final int STATE_STOPED = 4;
-	public static final Throwable  CancledException = new IOException("start cancleed");
+	public static final Throwable CancledException = new IOException("start cancleed");
 
 	@SuppressWarnings("unused")
 	private int state = STATE_INIT;
 	protected ServerSocketChannel javaChannel;
-	private final  AsyncExecutorGroup group;
+	private final AsyncExecutorGroup group;
 	private final AsyncExecutorGroup childGroup;
 	@SuppressWarnings("unused")
 	private SelectionKey selectionKey;
@@ -75,17 +75,16 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 		throw new UnsupportedOperationException();
 	}
 
-
 	@SuppressWarnings({ "unchecked" })
 	@Override
-	public void start(InetSocketAddress address, int backlog) throws Throwable {
+	public void start(InetSocketAddress address, int backlog) throws Exception {
 		if (STATE_UPDATER.compareAndSet(this, STATE_INIT, STATE_STARTING)) {
 			try {
 				this.javaChannel = ServerSocketChannel.open();
 				this.javaChannel.configureBlocking(false);
 				this.config();
 				this.javaChannel.bind(address,
-						backlog > 0 ? backlog : SystemPropertyUtil.getInt("org.jfw.jina.util.concurrent.DefaultAsyncServerChannel.backlog", 1024));
+						backlog > 0 ? backlog : SystemPropertyUtil.getInt("org.jfw.jina.util.concurrent.DefaultAsyncServerChannel.backlog", 5));
 			} catch (IOException e) {
 				try {
 					if (null != this.javaChannel) {
@@ -130,18 +129,19 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 						javaChannel.close();
 					} catch (Throwable t) {
 					}
-					clock.countDown();					
+					clock.countDown();
 				}
 			});
-			for(;;){
-			try {
-				clock.await();
-				break;
-			} catch (InterruptedException e) {
-				
+			for (;;) {
+				try {
+					clock.await();
+					break;
+				} catch (InterruptedException e) {
+
+				}
 			}
-			}
-			if(null!= this.error) throw this.error;
+			if (null != this.error)
+				throw new Exception(this.error);
 		}
 	}
 

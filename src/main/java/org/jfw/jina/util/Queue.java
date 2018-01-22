@@ -8,11 +8,19 @@ public interface Queue {
 	Node offer(Object item);
     Object peek();
     Object poll();
-    void shift();
+
+    
+  
     //return last (matcher.match()==true)
     void remove(Matcher<Object> matcher);
     void offerTo(Queue dest,Matcher<Object> matcher);	
     void offerTo(Queue dest);
+    
+    void unsafeShift();
+    Object unsafePeek();
+    Object unsafePeekLast();
+    
+    
 	public interface Node{
 		Object item();
 	}
