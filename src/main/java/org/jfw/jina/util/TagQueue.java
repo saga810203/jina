@@ -16,6 +16,7 @@ public interface TagQueue extends Queue{
     void offerToTagQueueWithTag(TagQueue dest,Matcher<Object> matcher);
     
     void beforeWithTag(Object item,Object tag,Comparator<Object> comparator);
+    void beforeWith(Object item,Object tag,Comparator<Object> comparator);
     
     public interface TagNode extends Node{
     	Object tag();

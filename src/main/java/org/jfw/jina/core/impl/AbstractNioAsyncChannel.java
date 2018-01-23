@@ -8,35 +8,34 @@ import java.nio.channels.SocketChannel;
 import org.jfw.jina.buffer.EmptyBuf;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
-import org.jfw.jina.core.AsyncChannel;
+import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.core.TaskCompletionHandler;
-import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.TagQueue.TagNode;
 import org.jfw.jina.util.TagQueue.TagQueueHandler;
 
-public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements AsyncChannel {
+public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implements NioAsyncChannel {
 	protected T executor;
 	protected SocketChannel javaChannel;
 	protected SelectionKey key;
-	protected final TagQueue inputCache;
+//	protected final TagQueue inputCache;
 	protected final TagQueue outputCache;
 	protected Throwable writeException;
 
-	protected NioAsyncChannel(NioAsyncChannel<? extends T> channel) {
+	protected AbstractNioAsyncChannel(AbstractNioAsyncChannel<? extends T> channel) {
 		assert channel.executor.inLoop();
 		this.javaChannel = channel.javaChannel;
 		this.executor = channel.executor;
 		this.key = channel.key;
 		this.key.attach(this);
-		this.inputCache = channel.inputCache;
+//		this.inputCache = channel.inputCache;
 		this.outputCache = channel.outputCache;
 		this.afterRegister();
 	}
 
-	protected NioAsyncChannel(T executor, SocketChannel javaChannel) {
+	protected AbstractNioAsyncChannel(T executor, SocketChannel javaChannel) {
 		assert executor.inLoop();
-		this.inputCache = executor.newTagQueue();
+//		this.inputCache = executor.newTagQueue();
 		this.outputCache = executor.newTagQueue();
 		this.executor = executor;
 		this.javaChannel = javaChannel;
@@ -52,7 +51,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 	}
 
 	protected void hanldReadException(IOException e) {
-		this.closeJavaChannel();
+		this.close();
 	}
 
 	protected void closeJavaChannel() {
@@ -74,7 +73,7 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 
 			}
 		}
-		this.inputCache.clear(RELEASE_INPUT_BUF);
+//		this.inputCache.clear(RELEASE_INPUT_BUF);
 		this.outputCache.clear(this.WRITE_ERROR_HANDLER);
 	}
 
@@ -450,11 +449,6 @@ public abstract class NioAsyncChannel<T extends NioAsyncExecutor> implements Asy
 	//
 	// };
 
-	public static final Handler RELEASE_INPUT_BUF = new Handler() {
-		@Override
-		public void process(Object obj) {
-			((InputBuf) obj).release();
-		}
-	};
+
 
 }

@@ -1080,6 +1080,25 @@ public class QueueProviderImpl implements QueueProvider {
 			head.tag = target;
 		}
 
+		@Override
+		public void beforeWith(Object item, Object tag, Comparator<Object> comparator) {
+			LinkedNode target = newDNode(item);
+			target.tag = tag;
+			LinkedNode node = head.next;
+			LinkedNode prev = head;
+			while (node != null) {
+				if (comparator.compare(node.item, item) > 0) {
+					target.next = node;
+					prev.next = target;
+					return;
+				}
+				prev = node;
+				node = prev.next;
+			}
+			prev.next = target;
+			head.tag = target;
+		}
+
 	}
 
 	public static class LinkedNode implements DNode, TagNode {

@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jfw.jina.buffer.BufAllocator;
 import org.jfw.jina.buffer.OutputBuf;
-import org.jfw.jina.core.AsyncChannel;
+import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
@@ -339,7 +339,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 			// Channel close
 			// See https://github.com/netty/netty/issues/2363
 			selectedKeys.keys[i] = null;
-			processSelectedKey(k, (AsyncChannel) k.attachment());
+			processSelectedKey(k, (NioAsyncChannel) k.attachment());
 
 			if (needsToSelectAgain) {
 				// null out entries in the array to allow to have it GC'ed once
@@ -370,7 +370,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 		Iterator<SelectionKey> i = selectedKeys.iterator();
 		for (;;) {
 			final SelectionKey k = i.next();
-			final AsyncChannel a = (AsyncChannel) k.attachment();
+			final NioAsyncChannel a = (NioAsyncChannel) k.attachment();
 			i.remove();
 			processSelectedKey(k, a);
 			if (!i.hasNext()) {
@@ -391,7 +391,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 		}
 	}
 
-	private void processSelectedKey(SelectionKey k, AsyncChannel ch) {
+	private void processSelectedKey(SelectionKey k, NioAsyncChannel ch) {
 		if (!k.isValid()) {
 			ch.close();
 			return;
@@ -444,7 +444,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 		// Collection<AsyncChannel> channels = new
 		// ArrayList<AsyncChannel>(keys.size());
 		for (SelectionKey k : keys) {
-			AsyncChannel channel = (AsyncChannel) k.attachment();
+			NioAsyncChannel channel = (NioAsyncChannel) k.attachment();
 			channel.close();
 		}
 	}
@@ -500,7 +500,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 		}
 		// int nChannels = 0;
 		for (SelectionKey key : oldSelector.keys()) {
-			AsyncChannel channel = (AsyncChannel) key.attachment();
+			NioAsyncChannel channel = (NioAsyncChannel) key.attachment();
 			try {
 				if (!key.isValid() || key.channel().keyFor(newSelector) != null) {
 					continue;

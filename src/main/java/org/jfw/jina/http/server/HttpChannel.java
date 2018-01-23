@@ -12,7 +12,7 @@ import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.core.AsyncTaskAdapter;
 import org.jfw.jina.core.TaskCompletionHandler;
-import org.jfw.jina.core.impl.NioAsyncChannel;
+import org.jfw.jina.core.impl.AbstractNioAsyncChannel;
 import org.jfw.jina.http.HttpConsts;
 import org.jfw.jina.http.HttpHeaders;
 import org.jfw.jina.http.HttpResponseStatus;
@@ -23,9 +23,10 @@ import org.jfw.jina.http.server.HttpRequest.HttpMethod;
 import org.jfw.jina.http.server.HttpRequest.RequestExecutor;
 import org.jfw.jina.util.DQueue.DNode;
 import org.jfw.jina.util.StringUtil;
+import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.TagQueue.TagNode;
 
-public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> implements KeepAliveCheck {
+public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> implements KeepAliveCheck {
 
 	private static final int HTTP_STATE_SKIP_CONTROL_CHARS = 10;
 	private static final int HTTP_STATE_READ_INITIAL = 20;
@@ -45,11 +46,13 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> implements K
 	protected HttpServerRequest request = null;
 	protected HttpServerResponse response = null;
 	protected LineParser lineParser = new LineParser(8192);
+	protected TagQueue inputCache;
 
 	protected HttpService service = new HttpService();
 
 	public HttpChannel(HttpAsyncExecutor executor, SocketChannel javaChannel) {
 		super(executor, javaChannel);
+		this.inputCache = executor.newTagQueue();
 	}
 
 	@Override
@@ -58,8 +61,9 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> implements K
 		this.addKeepAliveCheck();
 	}
 
-	public HttpChannel(NioAsyncChannel<? extends HttpAsyncExecutor> channel) {
+	public HttpChannel(AbstractNioAsyncChannel<? extends HttpAsyncExecutor> channel) {
 		super(channel);
+		this.inputCache = executor.newTagQueue();
 	}
 
 	public HttpService getService() {
@@ -219,6 +223,7 @@ public class HttpChannel extends NioAsyncChannel<HttpAsyncExecutor> implements K
 			this.keepAliveNode = null;
 		}
 		this.closeJavaChannel();
+		this.inputCache.clear(RELEASE_INPUT_BUF);
 	}
 
 	@Override

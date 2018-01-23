@@ -24,6 +24,10 @@ public final  class Http2ProtocolError {
 	public static final byte ERROR_FRAME_INVALID_STREAM_ID_WITH_CONTINUATION = -13;
 
 	
+	
+	
+	public static final byte ERROR_INVALID_SETTING_VALUE = -127;
+	
 	public static final byte ERROR_NOT_SUPPORTED = -128;
 	
 }
