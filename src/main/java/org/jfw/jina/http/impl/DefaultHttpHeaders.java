@@ -210,4 +210,27 @@ public class DefaultHttpHeaders implements WritableHttpHeaders {
 		return this;
 	}
 	
+	
+	public boolean contains(String name,String value){
+		assert null != name;
+		assert null!= value;
+		Entry entry = this.head;
+		while (entry != null) {
+			if (name.equals(entry.key) && value.equals(entry.getValue()))
+				return true;
+			entry = entry.next;
+		}
+		return false;
+	}
+	public boolean containsIgnoreCase(String name,String value){
+		assert null != name;
+		assert null!= value;
+		Entry entry = this.head;
+		while (entry != null) {
+			if (name.equalsIgnoreCase(entry.key) && value.equalsIgnoreCase(entry.getValue()))
+				return true;
+			entry = entry.next;
+		}
+		return false;
+	}
 }

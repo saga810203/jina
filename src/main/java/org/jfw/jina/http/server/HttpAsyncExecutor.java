@@ -105,5 +105,11 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 
 	}
 
+
 	public final DateFormatter dateFormatter = new DateFormatter();
+	
+
+	
+	
+	public final byte[] chunkedSizeBuffer = new byte[64];
 }

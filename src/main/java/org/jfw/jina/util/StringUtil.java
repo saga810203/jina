@@ -8,6 +8,37 @@ public final class StringUtil {
 	private StringUtil(){}
 	public static final String EMPTY_STRING="";
 	
+   public final static char[] DIGITS_CHAR = {
+            '0' , '1' , '2' , '3' , '4' , '5' ,
+            '6' , '7' , '8' , '9' , 'a' , 'b' ,
+            'c' , 'd' , 'e' , 'f' , 'g' , 'h' ,
+            'i' , 'j' , 'k' , 'l' , 'm' , 'n' ,
+            'o' , 'p' , 'q' , 'r' , 's' , 't' ,
+            'u' , 'v' , 'w' , 'x' , 'y' , 'z'
+        };
+   public final static byte[] DIGITS_BYTE = {
+           '0' , '1' , '2' , '3' , '4' , '5' ,
+           '6' , '7' , '8' , '9' , 'a' , 'b' ,
+           'c' , 'd' , 'e' , 'f' , 'g' , 'h' ,
+           'i' , 'j' , 'k' , 'l' , 'm' , 'n' ,
+           'o' , 'p' , 'q' , 'r' , 's' , 't' ,
+           'u' , 'v' , 'w' , 'x' , 'y' , 'z'
+       };
+   
+   public static int toUnsignedString(byte[] dest, int value, int shift) {
+	   assert dest.length >=32;
+       int bytePos = dest.length;
+       int radix = 1 << shift;
+       int mask = radix - 1;
+       do {
+           dest[--bytePos] = DIGITS_BYTE[value & mask];
+           value >>>= shift;
+       } while (value != 0);
+
+       return bytePos;
+   }
+   
+	
 	public static int findNonWhitespace(char[] seq,int begin,int end) {
 		for (int result = begin; result < end; ++result) {
 			if (!Character.isWhitespace(seq[result])) {

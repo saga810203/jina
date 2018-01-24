@@ -31,7 +31,7 @@ public class HttpService {
 					}
 					response.addHeader(HttpConsts.CONTENT_LENGTH, Long.toString(bs.length));
 					buf.writeBytes(bs);
-					response.flush(buf.input(),null);
+					response.unsafeFlush(buf.input(),null);
 				} finally {
 					buf.release();
 				}
