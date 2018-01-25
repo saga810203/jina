@@ -1,5 +1,8 @@
 package org.jfw.jina.http2.impl;
 
+import java.nio.channels.SelectionKey;
+import java.nio.channels.SocketChannel;
+
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.http.KeepAliveCheck;
@@ -8,22 +11,19 @@ import org.jfw.jina.http2.Http2AsyncExecutor;
 import org.jfw.jina.http2.Http2Connection;
 import org.jfw.jina.http2.Http2FlagsUtil;
 import org.jfw.jina.http2.Http2ProtocolError;
-import org.jfw.jina.util.Queue;
+import org.jfw.jina.http2.Http2Settings;
 import org.jfw.jina.util.DQueue.DNode;
-import org.jfw.jina.util.impl.QueueProviderImpl.LinkedQueue;
+import org.jfw.jina.util.Queue;
 
-public abstract class Http2FrameReader implements Http2Connection,FrameWriter,KeepAliveCheck{
+public abstract class Http2FrameReader implements Http2Connection, FrameWriter, KeepAliveCheck,NioAsyncChannel {
 	public static final long INVALID_STREAM_ID = Long.MIN_VALUE;
-	
+
 	public static final int FRAME_CONFIG_HEADER_SIZE = 9;
 	public static final int FRAME_PRIORITY_PAYLOAD_LENGTH = 5;
 	public static final int FRAME_RSTSTREAM_PAYLOAD_LENGTH = 4;
 	public static final int FRAME_SETTING_SETTING_ENTRY_LENGTH = 6;
 	public static final int FRAME_PING_PAYLOAD_LENGTH = 8;
-	
-	
-	
-	
+
 	public static final byte FRAME_STATE_READ_HEADER = 10;
 	public static final byte FRAME_STATE_READ_DATA = 20;
 
@@ -37,11 +37,23 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 	public static final byte FRAME_TYPE_GO_AWAY = 0x7;
 	public static final byte FRAME_TYPE_WINDOW_UPDATE = 0x8;
 	public static final byte FRAME_TYPE_CONTINUATION = 0x9;
+
+
+
+	protected int localHeaderTableSize = 4096;
+	protected boolean localEnablePush = false;
+	protected long localMaxConcurrentStreams=Long.MAX_VALUE;
+	protected int localInitialWindowSize=65535;
+	protected int localMaxFrameSize = 16777215;
+	protected long remoteMaxHeaderListSize = Long.MAX_VALUE; 
 	
 	
-	protected Http2AsyncExecutor executor;
+	protected int recvWindowSize = 65535;
 	
-	protected int frameConfigMaxSize = 0x4000;
+	
+	protected final Http2AsyncExecutor executor;
+	protected final SocketChannel javaChannel;
+	protected final SelectionKey key;
 
 	protected byte[] frameHeaderBuffer = new byte[9];
 	protected int frameHeaderIndex = 0;
@@ -59,19 +71,33 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 	// protected boolean headerProcessing = false;
 	protected long streamIdOfHeaders = INVALID_STREAM_ID;
 
-	private byte currentState = FRAME_STATE_READ_HEADER;
-	
-	private Stream lastCreateStream = null;
-	private int lastCreateStreamId = -1;
+	protected byte currentState = FRAME_STATE_READ_HEADER;
 	
 	
+	protected Http2FrameReader(Http2AsyncExecutor executor,SocketChannel javaChannel,SelectionKey key){
+		this.executor = executor;
+		this.javaChannel = javaChannel;
+		this.key = key;
+		this.framePayload = executor.newQueue();
+		this.headersPayload = executor.newQueue();
+		this.dataPayload = executor.newQueue();
+		key.attach(this);
+	}
 	
 	
+	
+	
+	
+
 	protected abstract void handleInputClose();
+
 	@Override
-	public abstract void keepAliveTimeout() ;
+	public abstract void keepAliveTimeout();
+
 	protected abstract void handleProtocolError();
-	
+
+	protected boolean fixLenPayload = false;
+
 	protected void handleRead(InputBuf buf, int len) {
 		this.removeKeepAliveCheck();
 		if (len > 0) {
@@ -97,21 +123,22 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 			handleInputClose();
 		}
 	}
+
 	private boolean doReadFramePayLoad(InputBuf buf) {
 		int nr = buf.readableBytes();
 		int readSize = Integer.min(this.payloadLength - this.payloadIndex, nr);
 		if (readSize > 0) {
 			if (nr > readSize) {
-				if(this.payloadLength<10){
-					buf.readBytes(this.frameHeaderBuffer, this.payloadIndex,readSize);
-				}else{
+				if (fixLenPayload) {
+					buf.readBytes(this.frameHeaderBuffer, this.payloadIndex, readSize);
+				} else {
 					this.framePayload.offer(buf.duplicate(readSize));
 					buf.skipBytes(readSize);
 				}
 			} else {
-				if(this.payloadLength<10){
-					buf.readBytes(this.frameHeaderBuffer, this.payloadIndex,readSize);
-				}else{
+				if (fixLenPayload) {
+					buf.readBytes(this.frameHeaderBuffer, this.payloadIndex, readSize);
+				} else {
 					this.framePayload.offer(buf.slice());
 					buf.skipAllBytes();
 				}
@@ -132,7 +159,7 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 			} else if (frameType == FRAME_TYPE_SETTINGS) {
 				handleSettingsFrame();
 			} else if (frameType == FRAME_TYPE_PUSH_PROMISE) {
-				handlePushPromiseFrame();
+				this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 			} else if (frameType == FRAME_TYPE_PING) {
 				handlePingFrame();
 			} else if (frameType == FRAME_TYPE_GO_AWAY) {
@@ -150,12 +177,80 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 			return false;
 		}
 	}
+
+	private void handleGoAwayFrame() {
+		this.readCacheBytes(8);
+		
+		int lastStreamId = ((frameHeaderBuffer[0] & 0x7f) << 24 | (frameHeaderBuffer[1] & 0xff) << 16 | (frameHeaderBuffer[2] & 0xff) << 8
+				| frameHeaderBuffer[3] & 0xff) ;
+		long errorCode =  ((frameHeaderBuffer[4] & 0xff) << 24 | (frameHeaderBuffer[5] & 0xff) << 16 | (frameHeaderBuffer[6] & 0xff) << 8
+				| frameHeaderBuffer[7] & 0xff) & 0xFFFFFFFFL;
+		goAway(lastStreamId,errorCode);
+		this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+	}
+
+	private void handleRstStreamFrame() {
+		long errorCode = ((frameHeaderBuffer[0] & 0xff) << 24 | (frameHeaderBuffer[1] & 0xff) << 16 | (frameHeaderBuffer[2] & 0xff) << 8
+				| frameHeaderBuffer[3] & 0xff) & 0xFFFFFFFFL;
+		resetStream(errorCode);
+	}
+
+	private void handleUnknownFrame() {
+		framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+	}
+
+	protected void handlePingFrame() {
+		if (Http2FlagsUtil.ack(frameFlag)) {
+			recvPingAck(this.frameHeaderBuffer);
+		} else {
+			writePingAck(this.frameHeaderBuffer);
+		}
+	}
+
+	protected void handleSettingsFrame() {
+		if (Http2FlagsUtil.ack(frameFlag)) {
+			recvSettingAck();
+		} else {
+			int numSettings = payloadLength / FRAME_SETTING_SETTING_ENTRY_LENGTH;
+			Http2Settings settings = new Http2Settings();
+			for (int index = 0; index < numSettings; ++index) {
+				this.readCacheBytes(FRAME_SETTING_SETTING_ENTRY_LENGTH);
+
+				char id = (char) (((frameHeaderBuffer[0] << 8) | (frameHeaderBuffer[1] & 0xFF)) & 0xffff);
+				long value = 0xffffffffL & (((frameHeaderBuffer[2] & 0xff) << 24) | ((frameHeaderBuffer[3] & 0xff) << 16) | ((frameHeaderBuffer[4] & 0xff) << 8)
+						| (frameHeaderBuffer[5] & 0xff));
+				try {
+					if (id == Http2Settings.SETTINGS_HEADER_TABLE_SIZE) {
+						settings.headerTableSize(value);
+					} else if (id == Http2Settings.SETTINGS_ENABLE_PUSH) {
+						if (value != 0L && value != 1L) {
+							throw new IllegalArgumentException("Setting ENABLE_PUSH is invalid: " + value);
+						}
+						settings.pushEnabled(1 == value);
+					} else if (id == Http2Settings.SETTINGS_MAX_CONCURRENT_STREAMS) {
+						settings.maxConcurrentStreams(value);
+					} else if (id == Http2Settings.SETTINGS_INITIAL_WINDOW_SIZE) {
+						settings.initialWindowSize(value);
+					} else if (id == Http2Settings.SETTINGS_MAX_FRAME_SIZE) {
+						settings.maxFrameSize(value);
+					} else if (id == Http2Settings.SETTINGS_MAX_HEADER_LIST_SIZE) {
+						settings.maxHeaderListSize(value);
+					}
+				} catch (IllegalArgumentException e) {
+					// TODO
+					this.currentState = Http2ProtocolError.ERROR_INVALID_SETTING_VALUE;
+					this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+					return;
+				}
+			}
+			applySetting(settings);
+			writeSettingAck();
+		}
+	}
+
 	protected void handlePriorityFrame() {
-		this.readCacheBytes(4);
 		long word1 = (((this.frameHeaderBuffer[0] & 0xff) << 24) | ((this.frameHeaderBuffer[2] & 0xff) << 16) | ((this.frameHeaderBuffer[3] & 0xff) << 8)
 				| (this.frameHeaderBuffer[4] & 0xff)) & 0xFFFFFFFFL;
-		;
-		payloadLength -= 4;
 
 		final boolean exclusive = (word1 & 0x80000000L) != 0;
 		final int streamDependency = (int) (word1 & 0x7FFFFFFFL);
@@ -163,31 +258,29 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 			// TODO impl throw streamError(streamId, PROTOCOL_ERROR, "A stream
 			// cannot depend on itself.");
 		}
-		final short weight = (short) (this.readUByteInPL() + 1);
-		assert this.framePayload.isEmpty();
-		onPriorityRead(streamDependency, weight, exclusive);
+		final short weight = (short) ((this.frameHeaderBuffer[4] & 0xFF) + 1);
+		handlePriority(streamDependency, weight, exclusive);
 	}
+
 	protected void handleWindowUpdateFrame() {
 		this.readCacheBytes(4);
 		int windowSizeIncrement = (((frameHeaderBuffer[0] & 0x7f) << 24) | ((frameHeaderBuffer[1] & 0xff) << 16) | ((frameHeaderBuffer[2] & 0xff) << 8)
 				| (frameHeaderBuffer[3] & 0xff));
 		assert this.framePayload.isEmpty();
-		if(windowSizeIncrement ==0){
+		if (windowSizeIncrement == 0) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_WINDOW_UPDATE;
 		}
 		// if (windowSizeIncrement == 0) {
 		// throw streamError(streamId, PROTOCOL_ERROR,
 		// "Received WINDOW_UPDATE with delta 0 for stream: %d", streamId);
 		// }
-		if(this.streamId==0){
-			incWindowSize(windowSizeIncrement);
-		}else{
-			Stream stream = stream(this.streamId);
-			if(stream!=null){
-				stream.incWindowSize(windowSizeIncrement);
-			}
+		if (this.streamId == 0) {
+			windowUpdate(windowSizeIncrement);
+		} else {
+			streamWindowUpdate(windowSizeIncrement);
 		}
 	}
+
 	protected void handleDataFrame() {
 		boolean hasPadding = Http2FlagsUtil.paddingPresent(frameFlag);
 		int oldPayloadSize = payloadLength;
@@ -211,32 +304,31 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 			}
 		}
 		this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
-		incWindowSize(oldPayloadSize);
-		Stream cStream= this.lastCreateStream;
-		if(this.lastCreateStreamId != this.streamId){
-			cStream = openedStream(this.streamId);
+		
+		this.recvWindowSize-=oldPayloadSize;
+		if(this.recvWindowSize<8192 ){
+			this.writeWindowUpdate(0,(this.localInitialWindowSize - recvWindowSize));
 		}
-		cStream.incWindowSize(oldPayloadSize);
-		cStream.hanldData(Http2FlagsUtil.endOfStream(frameFlag));
-		//this.dataPayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+		this.handleStreamData(oldPayloadSize, Http2FlagsUtil.endOfStream(frameFlag));
 		assert this.dataPayload.isEmpty();
 	}
+
 	protected void handleContinuationFrame() {
 		if (this.payloadLength > 0) {
 			this.framePayload.offer(this.headersPayload);
 		}
 		if (Http2FlagsUtil.endOfHeaders(frameFlag)) {
-			this.lastCreateStreamId = this.streamId;
 			if (priorityInHeaders) {
-				this.lastCreateStream = createStream(streamDependency, weightInHeaders, exclusiveInHeaders, endOfStreamInHeaders);
+				createStream(streamDependency, weightInHeaders, exclusiveInHeaders, endOfStreamInHeaders);
 			} else {
-				this.lastCreateStream =createStream(endOfStreamInHeaders);
+				createStream(endOfStreamInHeaders);
 			}
 			// this.headersPayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 			assert this.headersPayload.isEmpty();
 			this.streamIdOfHeaders = INVALID_STREAM_ID;
 		}
 	}
+
 	private boolean priorityInHeaders = false;
 	private int streamDependency = 0;
 	private short weightInHeaders = 0;
@@ -288,8 +380,7 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 				}
 			}
 			if (endOfHeaders) {
-				this.lastCreateStreamId = this.streamId;
-				this.lastCreateStream =createStream(streamDependency, weightInHeaders, exclusiveInHeaders, this.endOfStreamInHeaders);				
+				createStream(streamDependency, weightInHeaders, exclusiveInHeaders, this.endOfStreamInHeaders);
 				// this.headersPayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 				assert this.headersPayload.isEmpty();
 				this.streamIdOfHeaders = INVALID_STREAM_ID;
@@ -306,18 +397,16 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 				if (payloadLength > 0) {
 					this.framePayload.offerTo(this.headersPayload);
 				}
-				this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 			}
 			if (endOfHeaders) {
-				this.lastCreateStreamId = this.streamId;
-				this.lastCreateStream = createStream(this.endOfStreamInHeaders);				
+				createStream(this.endOfStreamInHeaders);
 				// this.headersPayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 				assert this.headersPayload.isEmpty();
 				this.streamIdOfHeaders = INVALID_STREAM_ID;
 			}
 		}
 	}
-	
+
 	private boolean doReadFrameHeader(InputBuf buf) {
 		int nr = buf.readableBytes();
 		int readSize = Integer.min(FRAME_CONFIG_HEADER_SIZE - this.frameHeaderIndex, nr);
@@ -327,7 +416,7 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 			this.frameHeaderIndex = 0;
 
 			this.payloadLength = (this.frameHeaderBuffer[0] & 0xff) << 16 | ((frameHeaderBuffer[1] & 0xff) << 8) | (frameHeaderBuffer[2] & 0xff);
-			if (payloadLength > this.frameConfigMaxSize) {
+			if (payloadLength > this.localMaxFrameSize) {
 				this.currentState = Http2ProtocolError.ERROR_MAX_FRAME_SIZE;
 				return true;
 			}
@@ -337,37 +426,47 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 					| frameHeaderBuffer[8] & 0xff);
 
 			this.currentState = FRAME_STATE_READ_DATA;
-			if (frameType == FRAME_TYPE_DATA)
+			if (frameType == FRAME_TYPE_DATA) {
+				fixLenPayload = false;
 				verifyDataFrame();
-			else if (frameType == FRAME_TYPE_HEADERS)
+			} else if (frameType == FRAME_TYPE_HEADERS) {
+				fixLenPayload = false;
 				verifyHeadersFrame();
-			else if (frameType == FRAME_TYPE_PRIORITY)
+			} else if (frameType == FRAME_TYPE_PRIORITY) {
+				fixLenPayload = true;
 				verifyPriorityFrame();
-			else if (frameType == FRAME_TYPE_RST_STREAM)
+			} else if (frameType == FRAME_TYPE_RST_STREAM) {
+				fixLenPayload = true;
 				verifyRstStreamFrame();
-			else if (frameType == FRAME_TYPE_SETTINGS)
+			} else if (frameType == FRAME_TYPE_SETTINGS) {
+				fixLenPayload = false;
 				verifySettingsFrame();
-			else if (frameType == FRAME_TYPE_PUSH_PROMISE)
+			} else if (frameType == FRAME_TYPE_PUSH_PROMISE) {
+				fixLenPayload = false;
 				verifyPushPromiseFrame();
-			else if (frameType == FRAME_TYPE_PING)
+			} else if (frameType == FRAME_TYPE_PING) {
+				fixLenPayload = true;
 				verifyPingFrame();
-			else if (frameType == FRAME_TYPE_GO_AWAY)
+			} else if (frameType == FRAME_TYPE_GO_AWAY) {
+				fixLenPayload = false;
 				verifyGoAwayFrame();
-			else if (frameType == FRAME_TYPE_WINDOW_UPDATE)
+			} else if (frameType == FRAME_TYPE_WINDOW_UPDATE) {
+				fixLenPayload = true;
 				verifyWindowUpdateFrame();
-			else if (frameType == FRAME_TYPE_CONTINUATION)
+			} else if (frameType == FRAME_TYPE_CONTINUATION) {
+				fixLenPayload = false;
 				verifyContinuationFrame();
-			else
+			} else {
+				fixLenPayload = false;
 				verifyUnknownFrame();
+			}
 
 			return true;
 		}
 		return false;
 
 	}
-	
 
-	
 	private void verifyUnknownFrame() {
 		this.currentState = Http2ProtocolError.ERROR_NOT_SUPPORTED;
 	}
@@ -527,6 +626,7 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 		// TODO AND EXISTS STREAM
 
 	}
+
 	private short readUByteInPL() {
 		assert !framePayload.isEmpty();
 		InputBuf buf = (InputBuf) framePayload.unsafePeek();
@@ -538,7 +638,7 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 		}
 		return ret;
 	}
-	
+
 	protected void readCacheBytes(int len) {
 		assert len <= 9 && len > 0;
 		assert this.frameHeaderIndex == 0;
@@ -568,6 +668,7 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 			framePayload.unsafeShift();
 		}
 	}
+
 	private void slicePayload(int length, Queue dest) {
 		for (;;) {
 			InputBuf buf = (InputBuf) this.framePayload.poll();
@@ -587,21 +688,12 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 		}
 	}
 	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
+	protected void readerRelease(){
+		this.framePayload.free(NioAsyncChannel.RELEASE_INPUT_BUF);
+		this.headersPayload.free(NioAsyncChannel.RELEASE_INPUT_BUF);
+		this.dataPayload.free(NioAsyncChannel.RELEASE_INPUT_BUF);
+	}
+
 	private DNode keepAliveNode;
 	private long keepAliveTimeout = Long.MAX_VALUE;
 
@@ -628,5 +720,37 @@ public abstract class Http2FrameReader implements Http2Connection,FrameWriter,Ke
 		return this.keepAliveTimeout;
 	}
 
+	
+	
+	protected final void setOpRead() {
+		assert this.key != null && this.key.isValid();
+		final int interestOps = key.interestOps();
+		if ((interestOps & SelectionKey.OP_READ) == 0) {
+			key.interestOps(interestOps | SelectionKey.OP_READ);
+		}
+	}
 
+	protected final void cleanOpRead() {
+		assert this.key != null && this.key.isValid();
+		final int interestOps = key.interestOps();
+		if ((interestOps & SelectionKey.OP_READ) != 0) {
+			key.interestOps(interestOps | ~SelectionKey.OP_READ);
+		}
+	}
+
+	protected final void setOpWrite() {
+		assert this.key != null && this.key.isValid();
+		final int interestOps = key.interestOps();
+		if ((interestOps & SelectionKey.OP_WRITE) == 0) {
+			key.interestOps(interestOps | SelectionKey.OP_WRITE);
+		}
+	}
+
+	protected final void cleanOpWrite() {
+		assert this.key != null && this.key.isValid();
+		final int interestOps = key.interestOps();
+		if ((interestOps & SelectionKey.OP_WRITE) != 0) {
+			key.interestOps(interestOps | ~SelectionKey.OP_WRITE);
+		}
+	}
 }

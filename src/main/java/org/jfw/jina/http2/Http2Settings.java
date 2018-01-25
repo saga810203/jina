@@ -1,5 +1,7 @@
 package org.jfw.jina.http2;
 
+import org.jfw.jina.http2.impl.Http2FrameReader;
+
 public class Http2Settings {
 	public static final long MAX_HEADER_TABLE_SIZE = 0xffffffffL;
 	public static final long MAX_CONCURRENT_STREAMS = 0xffffffffL;
@@ -167,7 +169,7 @@ public class Http2Settings {
 		if (value < MIN_HEADER_LIST_SIZE || value > MAX_HEADER_LIST_SIZE) {
 			throw new IllegalArgumentException("Setting MAX_HEADER_LIST_SIZE is invalid: " + value);
 		}
-		config[SETTINGS_MAX_HEADER_LIST_SIZE]=value;
+		config[SETTINGS_MAX_HEADER_LIST_SIZE] = value;
 		return this;
 	}
 
@@ -175,30 +177,69 @@ public class Http2Settings {
 	 * Clears and then copies the given settings into this object.
 	 */
 	public Http2Settings copyFrom(Http2Settings settings) {
-		System.arraycopy(settings.config,0, config, 0,config.length);
+		System.arraycopy(settings.config, 0, config, 0, config.length);
 		return this;
 	}
 
+	public int size() {
+		int ret = 0;
+		for (int i = 1; i < 7; ++i) {
+			if (config[i] >= 0) {
+				++ret;
+			}
+		}
+		return ret;
+	}
 
-//	protected String keyToString(char key) {
-//		switch (key) {
-//			case SETTINGS_HEADER_TABLE_SIZE:
-//				return "HEADER_TABLE_SIZE";
-//			case SETTINGS_ENABLE_PUSH:
-//				return "ENABLE_PUSH";
-//			case SETTINGS_MAX_CONCURRENT_STREAMS:
-//				return "MAX_CONCURRENT_STREAMS";
-//			case SETTINGS_INITIAL_WINDOW_SIZE:
-//				return "INITIAL_WINDOW_SIZE";
-//			case SETTINGS_MAX_FRAME_SIZE:
-//				return "MAX_FRAME_SIZE";
-//			case SETTINGS_MAX_HEADER_LIST_SIZE:
-//				return "MAX_HEADER_LIST_SIZE";
-//			default:
-//				// Unknown keys.
-//				return Character.toString(key);
-//		}
-//	}
+	public int writeToFrameBuffer(byte[] dest, int idx) {
+		assert dest != null;
+		assert idx >= 0;
+		assert dest.length - idx >= 45;
+		int ob = idx;
+		idx += 3;
+		dest[idx++] = Http2FrameReader.FRAME_TYPE_SETTINGS;
+		dest[idx++] = 0;
+		dest[idx++] = 0;
+		dest[idx++] = 0;
+		dest[idx++] = 0;
+		dest[idx++] = 0;
+		for (int i = 1; i < 7; ++i) {
+			if (config[i] >= 0) {
+				dest[idx++] = 0;
+				dest[idx++] = (byte) i;
+				int v = (int) config[i];
+				dest[idx++] = (byte) (v >>> 24);
+				dest[idx++] = (byte) (v >>> 16);
+				dest[idx++] = (byte) (v >>> 8);
+				dest[idx++] = (byte) (v);
+			}
+		}
+		int ret = idx - ob;
+		dest[ob++] = 0;
+		dest[ob++] = 0;
+		dest[ob++] = (byte) (ret-9);
+		return ret;
+	}
+
+	// protected String keyToString(char key) {
+	// switch (key) {
+	// case SETTINGS_HEADER_TABLE_SIZE:
+	// return "HEADER_TABLE_SIZE";
+	// case SETTINGS_ENABLE_PUSH:
+	// return "ENABLE_PUSH";
+	// case SETTINGS_MAX_CONCURRENT_STREAMS:
+	// return "MAX_CONCURRENT_STREAMS";
+	// case SETTINGS_INITIAL_WINDOW_SIZE:
+	// return "INITIAL_WINDOW_SIZE";
+	// case SETTINGS_MAX_FRAME_SIZE:
+	// return "MAX_FRAME_SIZE";
+	// case SETTINGS_MAX_HEADER_LIST_SIZE:
+	// return "MAX_HEADER_LIST_SIZE";
+	// default:
+	// // Unknown keys.
+	// return Character.toString(key);
+	// }
+	// }
 
 	public static boolean isMaxFrameSizeValid(long maxFrameSize) {
 		return maxFrameSize >= MAX_FRAME_SIZE_LOWER_BOUND && maxFrameSize <= MAX_FRAME_SIZE_UPPER_BOUND;

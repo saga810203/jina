@@ -1014,7 +1014,7 @@ public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> impl
 			assert buffer.length >= (index + length);
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) == null;
 			assert this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
-			byte[] chunkedBuffer = executor.chunkedSizeBuffer;
+			byte[] chunkedBuffer = executor.ouputCalcBuffer;
 			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
 			if (state == STATE_INIT) {
 				this.cacheOutputBuf = this.sendResponseLineAndHeader();
@@ -1038,7 +1038,7 @@ public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> impl
 			assert task != null;
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) == null;
 			assert this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
-			byte[] chunkedBuffer = executor.chunkedSizeBuffer;
+			byte[] chunkedBuffer = executor.ouputCalcBuffer;
 			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
 			if (state == STATE_INIT) {
 				this.cacheOutputBuf = this.sendResponseLineAndHeader();

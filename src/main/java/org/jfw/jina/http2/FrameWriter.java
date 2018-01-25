@@ -1,6 +1,5 @@
 package org.jfw.jina.http2;
 
-import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.http.HttpHeaders;
 
 
@@ -12,28 +11,12 @@ public interface FrameWriter {
 	void writeRstStream(int streamId, long errorCode);
 
 	void writeSettings(Http2Settings setting);
-
 	void writeSettingAck();
-
 	void writePing(byte[] buffer);
-
 	void writePingAck(byte[] buffer);
-
-	void writeGoAway(int lastStreamId, long errorCode, byte[] buffer);
-
+	void writeGoAway(int lastStreamId, long errorCode, byte[] buffer,int index,int length);
 	void writeWindowUpdate(int streamId,int windowSizeIncrement);
-
-	void writeData(DataFrame frame);
-
-	DataFrame newDataFrame();
-
-	public interface DataFrame {
-		DataFrame streamId(int id);
-
-		DataFrame flag(byte flag);
-
-		DataFrame listenner(TaskCompletionHandler handler);
-
-		int write(byte[] buffer, int index, int length);
-	}
+	void recvSettingAck();
+	void recvPingAck(byte[] buffer);
+	void windowUpdate(int size);
 }

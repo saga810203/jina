@@ -796,9 +796,6 @@ public abstract class Http2FrameChannel implements NioAsyncChannel, KeepAliveChe
 		}
 	}
 
-	public class Http2Setting {
-		TagQueue queue = executor.newTagQueue();
-	}
 
 	protected void afterRegister() {
 		this.keepAliveNode = this.executor.newDNode(this);

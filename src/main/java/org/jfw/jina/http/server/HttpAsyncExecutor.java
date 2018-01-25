@@ -111,5 +111,5 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 
 	
 	
-	public final byte[] chunkedSizeBuffer = new byte[64];
+	public final byte[] ouputCalcBuffer = new byte[64];
 }
