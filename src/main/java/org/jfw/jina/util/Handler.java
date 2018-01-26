@@ -1,5 +1,5 @@
 package org.jfw.jina.util;
 
-public interface Handler {
-	void process(Object obj);
+public interface Handler<I> {
+	void process(I obj);
 }

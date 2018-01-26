@@ -1,18 +1,24 @@
 package org.jfw.jina.http2.impl;
 
+
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.core.NioAsyncChannel;
+import org.jfw.jina.http.HttpHeaders;
 import org.jfw.jina.http.KeepAliveCheck;
+import org.jfw.jina.http.WritableHttpHeaders;
 import org.jfw.jina.http2.FrameWriter;
 import org.jfw.jina.http2.Http2AsyncExecutor;
 import org.jfw.jina.http2.Http2Connection;
 import org.jfw.jina.http2.Http2FlagsUtil;
 import org.jfw.jina.http2.Http2ProtocolError;
 import org.jfw.jina.http2.Http2Settings;
+import org.jfw.jina.http2.headers.HpackDynamicTable;
+import org.jfw.jina.http2.headers.HpackUtil;
 import org.jfw.jina.util.DQueue.DNode;
+
 import org.jfw.jina.util.Queue;
 
 public abstract class Http2FrameReader implements Http2Connection, FrameWriter, KeepAliveCheck,NioAsyncChannel {
@@ -37,18 +43,37 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 	public static final byte FRAME_TYPE_GO_AWAY = 0x7;
 	public static final byte FRAME_TYPE_WINDOW_UPDATE = 0x8;
 	public static final byte FRAME_TYPE_CONTINUATION = 0x9;
+	
+	
+	
+    private static final byte READ_HEADER_REPRESENTATION = 0;
+    private static final byte READ_MAX_DYNAMIC_TABLE_SIZE = 1;
+    private static final byte READ_INDEXED_HEADER = 2;
+    private static final byte READ_INDEXED_HEADER_NAME = 3;
+    private static final byte READ_LITERAL_HEADER_NAME_LENGTH_PREFIX = 4;
+    private static final byte READ_LITERAL_HEADER_NAME_LENGTH = 5;
+    private static final byte READ_LITERAL_HEADER_NAME = 6;
+    private static final byte READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX = 7;
+    private static final byte READ_LITERAL_HEADER_VALUE_LENGTH = 8;
+    private static final byte READ_LITERAL_HEADER_VALUE = 9;
 
 
 
-	protected int localHeaderTableSize = 4096;
+	protected long localHeaderTableSize = 4096;
 	protected boolean localEnablePush = false;
 	protected long localMaxConcurrentStreams=Long.MAX_VALUE;
 	protected int localInitialWindowSize=65535;
 	protected int localMaxFrameSize = 16777215;
-	protected long remoteMaxHeaderListSize = Long.MAX_VALUE; 
+	protected long localMaxHeaderListSize = Long.MAX_VALUE; 
+	
+	protected long localMaxHeaderListSizeGoAway = Long.MAX_VALUE;   //localMaxHeaderListSize + (maxHeaderListSize >>> 2);
+	
+	
 	
 	
 	protected int recvWindowSize = 65535;
+	
+	protected HpackDynamicTable remoteDynaTable = new HpackDynamicTable(4096);
 	
 	
 	protected final Http2AsyncExecutor executor;
@@ -63,11 +88,11 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 	protected byte frameFlag = 0;
 	protected int streamId = 0;
 
-	protected Queue framePayload;
+	protected Queue<InputBuf> framePayload;
 	protected int payloadIndex = 0;
 
-	protected Queue headersPayload;
-	protected Queue dataPayload;
+	protected Queue<InputBuf> headersPayload;
+	protected Queue<InputBuf> dataPayload;
 	// protected boolean headerProcessing = false;
 	protected long streamIdOfHeaders = INVALID_STREAM_ID;
 
@@ -179,7 +204,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 	}
 
 	private void handleGoAwayFrame() {
-		this.readCacheBytes(8);
+		this.readCacheBytesInQueue(this.framePayload,8);
 		
 		int lastStreamId = ((frameHeaderBuffer[0] & 0x7f) << 24 | (frameHeaderBuffer[1] & 0xff) << 16 | (frameHeaderBuffer[2] & 0xff) << 8
 				| frameHeaderBuffer[3] & 0xff) ;
@@ -214,7 +239,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 			int numSettings = payloadLength / FRAME_SETTING_SETTING_ENTRY_LENGTH;
 			Http2Settings settings = new Http2Settings();
 			for (int index = 0; index < numSettings; ++index) {
-				this.readCacheBytes(FRAME_SETTING_SETTING_ENTRY_LENGTH);
+				this.readCacheBytesInQueue(this.framePayload,FRAME_SETTING_SETTING_ENTRY_LENGTH);
 
 				char id = (char) (((frameHeaderBuffer[0] << 8) | (frameHeaderBuffer[1] & 0xFF)) & 0xffff);
 				long value = 0xffffffffL & (((frameHeaderBuffer[2] & 0xff) << 24) | ((frameHeaderBuffer[3] & 0xff) << 16) | ((frameHeaderBuffer[4] & 0xff) << 8)
@@ -263,7 +288,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 	}
 
 	protected void handleWindowUpdateFrame() {
-		this.readCacheBytes(4);
+		this.readCacheBytesInQueue(this.framePayload, 4);
 		int windowSizeIncrement = (((frameHeaderBuffer[0] & 0x7f) << 24) | ((frameHeaderBuffer[1] & 0xff) << 16) | ((frameHeaderBuffer[2] & 0xff) << 8)
 				| (frameHeaderBuffer[3] & 0xff));
 		assert this.framePayload.isEmpty();
@@ -286,7 +311,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 		int oldPayloadSize = payloadLength;
 		int padding = 0;
 		if (hasPadding) {
-			padding = this.readUByteInPL();
+			padding = this.readUByteInQueue(this.framePayload);
 			--payloadLength;
 		}
 		if (payloadLength < padding) {
@@ -315,7 +340,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 
 	protected void handleContinuationFrame() {
 		if (this.payloadLength > 0) {
-			this.framePayload.offer(this.headersPayload);
+			this.framePayload.offerTo(this.headersPayload);
 		}
 		if (Http2FlagsUtil.endOfHeaders(frameFlag)) {
 			if (priorityInHeaders) {
@@ -342,7 +367,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 		this.endOfStreamInHeaders = Http2FlagsUtil.endOfStream(frameType);
 		int padding = 0;
 		if (hasPadding) {
-			padding = this.readUByteInPL();
+			padding = this.readUByteInQueue(this.framePayload);
 			--payloadLength;
 		}
 
@@ -354,7 +379,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 
 		if (Http2FlagsUtil.priorityPresent(frameFlag)) {
 			priorityInHeaders = true;
-			this.readCacheBytes(4);
+			this.readCacheBytesInQueue(this.framePayload,4);
 			long word1 = (((this.frameHeaderBuffer[0] & 0xff) << 24) | ((this.frameHeaderBuffer[2] & 0xff) << 16) | ((this.frameHeaderBuffer[3] & 0xff) << 8)
 					| (this.frameHeaderBuffer[4] & 0xff)) & 0xFFFFFFFFL;
 			payloadLength -= 4;
@@ -366,7 +391,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 				// throw streamError(streamId, PROTOCOL_ERROR, "A stream cannot
 				// depend on itself.");
 			}
-			weightInHeaders = (short) (this.readUByteInPL() + 1);
+			weightInHeaders = (short) (this.readUByteInQueue(this.framePayload) + 1);
 			--payloadLength;
 
 			if (padding != 0) {
@@ -627,23 +652,36 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 
 	}
 
-	private short readUByteInPL() {
-		assert !framePayload.isEmpty();
-		InputBuf buf = (InputBuf) framePayload.unsafePeek();
+
+	
+	private short readUByteInQueue(Queue<InputBuf> queue) {
+		assert !queue.isEmpty();
+		InputBuf buf = (InputBuf) queue.unsafePeek();
 		assert buf.readable();
 		short ret = buf.readUnsignedByte();
 		if (!buf.readable()) {
 			buf.release();
-			framePayload.unsafeShift();
+			queue.unsafeShift();
+		}
+		return ret;
+	}
+	private byte readByteInQueue(Queue<InputBuf> queue) {
+		assert !queue.isEmpty();
+		InputBuf buf = (InputBuf) queue.unsafePeek();
+		assert buf.readable();
+		byte ret = buf.readByte();
+		if (!buf.readable()) {
+			buf.release();
+			queue.unsafeShift();
 		}
 		return ret;
 	}
 
-	protected void readCacheBytes(int len) {
+	protected void readCacheBytesInQueue(Queue<InputBuf> queue, int len) {
 		assert len <= 9 && len > 0;
 		assert this.frameHeaderIndex == 0;
-		assert !framePayload.isEmpty();
-		InputBuf buf = (InputBuf) framePayload.unsafePeek();
+		assert queue.isEmpty();
+		InputBuf buf = queue.unsafePeek();
 		assert buf != null;
 		assert buf.readable();
 		int ridx = 0;
@@ -652,11 +690,11 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 			buf.readBytes(this.frameHeaderBuffer, ridx, rs);
 			len -= rs;
 			if (len != 0) {
-				framePayload.unsafeShift();
+				queue.unsafeShift();
 				ridx += rs;
 				buf.release();
-				framePayload.unsafeShift();
-				buf = (InputBuf) framePayload.unsafePeek();
+				queue.unsafeShift();
+				buf = (InputBuf) queue.unsafePeek();
 				assert buf != null;
 				assert buf.readable();
 			} else {
@@ -665,11 +703,11 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 		}
 		if (!buf.readable()) {
 			buf.release();
-			framePayload.unsafeShift();
+			queue.unsafeShift();
 		}
 	}
 
-	private void slicePayload(int length, Queue dest) {
+	private void slicePayload(int length, Queue<InputBuf> dest) {
 		for (;;) {
 			InputBuf buf = (InputBuf) this.framePayload.poll();
 			assert buf != null;
@@ -753,4 +791,195 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 			key.interestOps(interestOps | ~SelectionKey.OP_WRITE);
 		}
 	}
+	
+	
+	
+	
+	
+	
+	
+	
+	  public void decode(int streamId,/*Http2Headers headers*/ WritableHttpHeaders headerss ) throws Http2Exception {
+	        int index = 0;
+	        long headersLength = 0;
+	        int nameLength = 0;
+	        int valueLength = 0;
+	        byte state = READ_HEADER_REPRESENTATION;
+	        boolean huffmanEncoded = false;
+	        CharSequence name = null;
+	       HpackUtil.IndexType indexType =HpackUtil.IndexType.NONE;
+	        while (!this.headersPayload.isEmpty()) {
+	            switch (state) {
+	                case READ_HEADER_REPRESENTATION:
+	                    byte b =this.readByteInQueue(this.headersPayload);
+	                    if (maxDynamicTableSizeChangeRequired && (b & 0xE0) != 0x20) {
+	                        // HpackEncoder MUST signal maximum dynamic table size change
+	                        throw MAX_DYNAMIC_TABLE_SIZE_CHANGE_REQUIRED;
+	                    }
+	                    if (b < 0) {
+	                        // Indexed Header Field
+	                        index = b & 0x7F;
+	                        switch (index) {
+	                            case 0:
+	                                throw DECODE_ILLEGAL_INDEX_VALUE;
+	                            case 0x7F:
+	                                state = READ_INDEXED_HEADER;
+	                                break;
+	                            default:
+	                                headersLength = indexHeader(streamId, index, headers, headersLength);
+	                        }
+	                    } else if ((b & 0x40) == 0x40) {
+	                        // Literal Header Field with Incremental Indexing
+	                        indexType = IndexType.INCREMENTAL;
+	                        index = b & 0x3F;
+	                        switch (index) {
+	                            case 0:
+	                                state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
+	                                break;
+	                            case 0x3F:
+	                                state = READ_INDEXED_HEADER_NAME;
+	                                break;
+	                            default:
+	                                // Index was stored as the prefix
+	                                name = readName(index);
+	                                state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
+	                        }
+	                    } else if ((b & 0x20) == 0x20) {
+	                        // Dynamic Table Size Update
+	                        index = b & 0x1F;
+	                        if (index == 0x1F) {
+	                            state = READ_MAX_DYNAMIC_TABLE_SIZE;
+	                        } else {
+	                            setDynamicTableSize(index);
+	                            state = READ_HEADER_REPRESENTATION;
+	                        }
+	                    } else {
+	                        // Literal Header Field without Indexing / never Indexed
+	                        indexType = ((b & 0x10) == 0x10) ? IndexType.NEVER : IndexType.NONE;
+	                        index = b & 0x0F;
+	                        switch (index) {
+	                            case 0:
+	                                state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
+	                                break;
+	                            case 0x0F:
+	                                state = READ_INDEXED_HEADER_NAME;
+	                                break;
+	                            default:
+	                            // Index was stored as the prefix
+	                            name = readName(index);
+	                            state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
+	                        }
+	                    }
+	                    break;
+
+	                case READ_MAX_DYNAMIC_TABLE_SIZE:
+	                    setDynamicTableSize(decodeULE128(in, (long) index));
+	                    state = READ_HEADER_REPRESENTATION;
+	                    break;
+
+	                case READ_INDEXED_HEADER:
+	                    headersLength = indexHeader(streamId, decodeULE128(in, index), headers, headersLength);
+	                    state = READ_HEADER_REPRESENTATION;
+	                    break;
+
+	                case READ_INDEXED_HEADER_NAME:
+	                    // Header Name matches an entry in the Header Table
+	                    name = readName(decodeULE128(in, index));
+	                    state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
+	                    break;
+
+	                case READ_LITERAL_HEADER_NAME_LENGTH_PREFIX:
+	                    b = in.readByte();
+	                    huffmanEncoded = (b & 0x80) == 0x80;
+	                    index = b & 0x7F;
+	                    if (index == 0x7f) {
+	                        state = READ_LITERAL_HEADER_NAME_LENGTH;
+	                    } else {
+	                        if (index > maxHeaderListSizeGoAway - headersLength) {
+	                            headerListSizeExceeded(maxHeaderListSizeGoAway);
+	                        }
+	                        nameLength = index;
+	                        state = READ_LITERAL_HEADER_NAME;
+	                    }
+	                    break;
+
+	                case READ_LITERAL_HEADER_NAME_LENGTH:
+	                    // Header Name is a Literal String
+	                    nameLength = decodeULE128(in, index);
+
+	                    if (nameLength > maxHeaderListSizeGoAway - headersLength) {
+	                        headerListSizeExceeded(maxHeaderListSizeGoAway);
+	                    }
+	                    state = READ_LITERAL_HEADER_NAME;
+	                    break;
+
+	                case READ_LITERAL_HEADER_NAME:
+	                    // Wait until entire name is readable
+	                    if (in.readableBytes() < nameLength) {
+	                        throw notEnoughDataException(in);
+	                    }
+
+	                    name = readStringLiteral(in, nameLength, huffmanEncoded);
+
+	                    state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
+	                    break;
+
+	                case READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX:
+	                    b = in.readByte();
+	                    huffmanEncoded = (b & 0x80) == 0x80;
+	                    index = b & 0x7F;
+	                    switch (index) {
+	                        case 0x7f:
+	                            state = READ_LITERAL_HEADER_VALUE_LENGTH;
+	                            break;
+	                        case 0:
+	                            headersLength = insertHeader(streamId, headers, name, EMPTY_STRING, indexType,
+	                                                         headersLength);
+	                            state = READ_HEADER_REPRESENTATION;
+	                            break;
+	                        default:
+	                            // Check new header size against max header size
+	                            if ((long) index + nameLength > maxHeaderListSizeGoAway - headersLength) {
+	                                headerListSizeExceeded(maxHeaderListSizeGoAway);
+	                            }
+	                            valueLength = index;
+	                            state = READ_LITERAL_HEADER_VALUE;
+	                    }
+
+	                    break;
+
+	                case READ_LITERAL_HEADER_VALUE_LENGTH:
+	                    // Header Value is a Literal String
+	                    valueLength = decodeULE128(in, index);
+
+	                    // Check new header size against max header size
+	                    if ((long) valueLength + nameLength > maxHeaderListSizeGoAway - headersLength) {
+	                        headerListSizeExceeded(maxHeaderListSizeGoAway);
+	                    }
+	                    state = READ_LITERAL_HEADER_VALUE;
+	                    break;
+
+	                case READ_LITERAL_HEADER_VALUE:
+	                    // Wait until entire value is readable
+	                    if (in.readableBytes() < valueLength) {
+	                        throw notEnoughDataException(in);
+	                    }
+
+	                    CharSequence value = readStringLiteral(in, valueLength, huffmanEncoded);
+	                    headersLength = insertHeader(streamId, headers, name, value, indexType, headersLength);
+	                    state = READ_HEADER_REPRESENTATION;
+	                    break;
+
+	                default:
+	                    throw new Error("should not reach here state: " + state);
+	            }
+	        }
+
+	        // we have read all of our headers, and not exceeded maxHeaderListSizeGoAway see if we have
+	        // exceeded our actual maxHeaderListSize. This must be done here to prevent dynamic table
+	        // corruption
+	        if (headersLength > maxHeaderListSize) {
+	            headerListSizeExceeded(streamId, maxHeaderListSize, true);
+	        }
+	    }
 }

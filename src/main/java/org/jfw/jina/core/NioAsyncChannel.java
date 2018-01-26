@@ -11,10 +11,10 @@ public interface NioAsyncChannel{
 	void setSelectionKey(SelectionKey key);
 	void close();
 	void connected();
-	public static final Handler RELEASE_INPUT_BUF = new Handler() {
+	public static final Handler<InputBuf> RELEASE_INPUT_BUF = new Handler<InputBuf>() {
 		@Override
-		public void process(Object obj) {
-			((InputBuf) obj).release();
+		public void process(InputBuf obj) {
+			obj.release();
 		}
 	};
 }

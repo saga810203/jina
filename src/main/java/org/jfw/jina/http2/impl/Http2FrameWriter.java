@@ -15,7 +15,7 @@ import org.jfw.jina.http2.Http2Settings;
 
 public abstract class Http2FrameWriter extends Http2FrameReader implements FrameWriter {
 	//remote Setting;
-	protected int remoteHeaderTableSize = 4096;
+	protected long remoteHeaderTableSize = 4096;
 	protected boolean remoteEnablePush = false;
 	protected long remoteMaxConcurrentStreams=Long.MAX_VALUE;
 	protected int remoteInitialWindowSize=65535;

@@ -19,7 +19,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 	protected SocketChannel javaChannel;
 	protected SelectionKey key;
 //	protected final TagQueue inputCache;
-	protected final TagQueue outputCache;
+	protected final TagQueue<InputBuf,TaskCompletionHandler> outputCache;
 	protected Throwable writeException;
 
 	protected AbstractNioAsyncChannel(AbstractNioAsyncChannel<? extends T> channel) {
@@ -432,9 +432,9 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		return buf;
 	}
 
-	protected final TagQueueHandler WRITE_ERROR_HANDLER = new TagQueueHandler() {
+	protected final TagQueueHandler<InputBuf,TaskCompletionHandler> WRITE_ERROR_HANDLER = new TagQueueHandler<InputBuf,TaskCompletionHandler>() {
 		@Override
-		public void process(Object item, Object tag) {
+		public void process(InputBuf item, TaskCompletionHandler tag) {
 			((InputBuf) item).release();
 			if (tag != null) {
 				((TaskCompletionHandler) tag).failed(writeException, executor);

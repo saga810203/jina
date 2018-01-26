@@ -3,15 +3,16 @@ package org.jfw.jina.util.impl;
 import java.util.Comparator;
 
 import org.jfw.jina.util.DQueue;
-import org.jfw.jina.util.Handler;
-import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.DQueue.DNode;
+import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.Matcher;
 import org.jfw.jina.util.Queue;
 import org.jfw.jina.util.QueueProvider;
+import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.TagQueue.TagNode;
 import org.jfw.jina.util.concurrent.SystemPropertyUtil;
 
+@SuppressWarnings({ "unchecked", "rawtypes" })
 public class QueueProviderImpl implements QueueProvider {
 
 	private static final int MAX_NUM_POOLED_NODE = SystemPropertyUtil.getInt("org.jfw.jina.util.QueueProvider.MAX_NUM_POOLED_NODE", 1024 * 1024);
@@ -51,7 +52,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 	}
 
-	public LinkedNode newDNode(Object item) {
+	public <I> LinkedNode newDNode(I item) {
 		LinkedNode ret = headOfProvider.next;
 		if (ret != null) {
 			--numNode;
@@ -64,7 +65,7 @@ public class QueueProviderImpl implements QueueProvider {
 		return ret;
 	}
 
-	public LinkedNode newTagNode(Object item, Object tag) {
+	public <I, T> LinkedNode newTagNode(I item, T tag) {
 		LinkedNode ret = headOfProvider.next;
 		if (ret != null) {
 			--numNode;
@@ -79,21 +80,21 @@ public class QueueProviderImpl implements QueueProvider {
 	}
 
 	@Override
-	public Queue newQueue() {
-		return new LinkedQueue();
+	public <I> Queue<I> newQueue() {
+		return new LinkedQueue<I>();
 	}
 
 	@Override
-	public DQueue newDQueue() {
-		return new DeLinkedQueue();
+	public <I> DQueue<I> newDQueue() {
+		return new DeLinkedQueue<I>();
 	}
 
 	@Override
-	public TagQueue newTagQueue() {
-		return new TagLinkedQueue();
+	public <I, T> TagQueue<I, T> newTagQueue() {
+		return new TagLinkedQueue<I, T>();
 	}
 
-	public class LinkedQueue implements Queue {
+	public class LinkedQueue<I> implements Queue<I> {
 		public LinkedNode head;
 
 		private LinkedQueue() {
@@ -102,12 +103,12 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(Handler handler) {
+		public void clear(Handler<I> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
 				++i;
-				handler.process(node.item);
+				handler.process((I) node.item);
 				node.item = null;
 				node = node.next;
 			}
@@ -123,11 +124,11 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void free(Handler handler) {
+		public void free(Handler<I> handler) {
 			LinkedNode node = head.next;
 			int i = 1;
 			while (node != null) {
-				handler.process(node.item);
+				handler.process((I) node.item);
 				node.item = null;
 				++i;
 				node = node.next;
@@ -145,7 +146,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public LinkedNode offer(Object item) {
+		public LinkedNode offer(I item) {
 			LinkedNode node = newDNode(item);
 			LinkedNode last = (LinkedNode) head.tag;
 			last.next = node;
@@ -154,13 +155,13 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public Object peek() {
+		public I peek() {
 			LinkedNode node = head.next;
-			return node != null ? node.item : null;
+			return (I) (node != null ? node.item : null);
 		}
 
 		@Override
-		public Object poll() {
+		public I poll() {
 			Object ret = null;
 			LinkedNode node = head.next;
 			if (node == null) {
@@ -174,7 +175,7 @@ public class QueueProviderImpl implements QueueProvider {
 			ret = node.item;
 			node.item = null;
 			freeNode(node);
-			return ret;
+			return (I) ret;
 		}
 
 		@Override
@@ -189,25 +190,38 @@ public class QueueProviderImpl implements QueueProvider {
 			freeNode(node);
 		}
 
-		public Object unsafePeek() {
+		public I unsafePeek() {
 			assert head.next != null;
-			return head.next.item;
+			return (I) head.next.item;
 		}
 
-		public Object unsafePeekLast() {
+		public I unsafePeekLast() {
 			assert head.tag != null;
-			return ((LinkedNode) head.tag).item;
+			return (I) ((LinkedNode) head.tag).item;
+		}
+		@Override
+		public I find(Matcher<I> matcher) {
+			assert matcher != null;
+			LinkedNode node = head.next;
+            for(;;){
+            	if(node==null) return null;
+            	I ret = (I)node.item;
+            	if(matcher.match(ret)){
+            		return ret;
+            	}
+            	node = node.next;
+            }
 		}
 
 		@Override
-		public void remove(Matcher<Object> matcher) {
+		public void remove(Matcher<I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode node = begin;
 				LinkedNode end = null;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					node.item = null;
 					end = node;
 					node = node.next;
@@ -230,7 +244,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerTo(Queue dest, Matcher<Object> matcher) {
+		public void offerTo(Queue<I> dest, Matcher<I> matcher) {
 			assert dest != null;
 			assert dest instanceof LinkedQueue;
 			assert matcher != null;
@@ -239,7 +253,7 @@ public class QueueProviderImpl implements QueueProvider {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					end = node;
 					node = node.next;
@@ -247,7 +261,7 @@ public class QueueProviderImpl implements QueueProvider {
 				if (i > 0) {
 					// node = end.next;
 					// end.next = null;
-					LinkedNode destHead = ((LinkedQueue) dest).head;
+					LinkedNode destHead = ((LinkedQueue<I>) dest).head;
 					LinkedNode destLast = (LinkedNode) destHead.tag;
 					destLast.next = begin;
 					destHead.tag = end;
@@ -268,12 +282,12 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerTo(Queue dest) {
+		public void offerTo(Queue<I> dest) {
 			assert dest != null;
 			assert dest instanceof LinkedQueue;
 			if (head.next != null) {
-				LinkedNode destHead = (LinkedNode) ((LinkedQueue) dest).head;
-				LinkedNode destLast = (LinkedNode) ((LinkedQueue) dest).head.tag;
+				LinkedNode destHead = (LinkedNode) ((LinkedQueue<I>) dest).head;
+				LinkedNode destLast = (LinkedNode) ((LinkedQueue<I>) dest).head.tag;
 				destLast.next = head.next;
 				destHead.tag = head.tag;
 				head.next = null;
@@ -282,14 +296,14 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(Matcher<Object> matcher) {
+		public void clear(Matcher<I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					node.item = null;
 					end = node;
@@ -311,23 +325,37 @@ public class QueueProviderImpl implements QueueProvider {
 			}
 		}
 
+
+
 	}
 
-	public class DeLinkedQueue implements DQueue {
+	public class DeLinkedQueue<I> implements DQueue<I> {
 		public LinkedNode head;
 
 		private DeLinkedQueue() {
 			head = newDNode(null);
 			head.tag = head;
 		}
-
 		@Override
-		public void clear(Handler handler) {
+		public I find(Matcher<I> matcher) {
+			assert matcher != null;
+			LinkedNode node = head.next;
+            for(;;){
+            	if(node==null) return null;
+            	I ret = (I)node.item;
+            	if(matcher.match(ret)){
+            		return ret;
+            	}
+            	node = node.next;
+            }
+		}
+		@Override
+		public void clear(Handler<I> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
 				++i;
-				handler.process(node.item);
+				handler.process((I) node.item);
 				node.item = null;
 				node.tag = null;
 				node = node.next;
@@ -344,14 +372,14 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(Matcher<Object> matcher) {
+		public void clear(Matcher<I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					node.item = null;
 					node.tag = null;
@@ -375,11 +403,11 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void free(Handler handler) {
+		public void free(Handler<I> handler) {
 			LinkedNode node = head.next;
 			int i = 1;
 			while (node != null) {
-				handler.process(node.item);
+				handler.process((I) node.item);
 				node.item = null;
 				node.tag = null;
 				++i;
@@ -407,24 +435,24 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public Object peek() {
+		public I peek() {
 			LinkedNode node = head.next;
-			return node != null ? node.item : null;
+			return (I) (node != null ? node.item : null);
 		}
 
 		@Override
-		public Object unsafePeek() {
+		public I unsafePeek() {
 			assert head.next != null;
-			return head.next.item;
+			return (I) head.next.item;
 		}
 
-		public Object unsafePeekLast() {
+		public I unsafePeekLast() {
 			assert head.tag != null;
-			return ((LinkedNode) head.tag).item;
+			return (I) ((LinkedNode) head.tag).item;
 		}
 
 		@Override
-		public Object poll() {
+		public I poll() {
 			Object ret = null;
 			LinkedNode node = head.next;
 			if (node == null) {
@@ -441,7 +469,7 @@ public class QueueProviderImpl implements QueueProvider {
 			node.tag = null;
 			node.item = null;
 			freeNode(node);
-			return ret;
+			return (I) ret;
 		}
 
 		@Override
@@ -458,14 +486,14 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void remove(Matcher<Object> matcher) {
+		public void remove(Matcher<I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode node = begin;
 				LinkedNode end = null;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					node.item = null;
 					node.tag = null;
 					end = node;
@@ -491,7 +519,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerTo(Queue dest, Matcher<Object> matcher) {
+		public void offerTo(Queue<I> dest, Matcher<I> matcher) {
 			assert dest != null;
 			assert dest instanceof LinkedQueue;
 			assert matcher != null;
@@ -500,7 +528,7 @@ public class QueueProviderImpl implements QueueProvider {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					end = node;
 					node.tag = null;
@@ -509,7 +537,7 @@ public class QueueProviderImpl implements QueueProvider {
 				if (i > 0) {
 					// node = end.next;
 					// end.next = null;
-					LinkedNode destHead = ((LinkedQueue) dest).head;
+					LinkedNode destHead = ((LinkedQueue<I>) dest).head;
 					LinkedNode destLast = (LinkedNode) destHead.tag;
 					destLast.next = begin;
 					destHead.tag = end;
@@ -532,7 +560,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerToDQueue(DQueue dest, Matcher<Object> matcher) {
+		public void offerToDQueue(DQueue<I> dest, Matcher<I> matcher) {
 			assert dest != null;
 			assert dest instanceof DeLinkedQueue;
 			assert matcher != null;
@@ -541,7 +569,7 @@ public class QueueProviderImpl implements QueueProvider {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					end = node;
 					node = node.next;
@@ -569,7 +597,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerTo(Queue dest) {
+		public void offerTo(Queue<I> dest) {
 			assert dest != null;
 			assert dest instanceof LinkedQueue;
 			if (head.next != null) {
@@ -588,7 +616,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerToDQueue(DQueue dest) {
+		public void offerToDQueue(DQueue<I> dest) {
 			assert dest != null;
 			assert dest instanceof DeLinkedQueue;
 			if (head.next != null) {
@@ -605,21 +633,33 @@ public class QueueProviderImpl implements QueueProvider {
 
 	}
 
-	public class TagLinkedQueue implements TagQueue {
+	public class TagLinkedQueue<I, T> implements TagQueue<I, T> {
 		public LinkedNode head;
 
 		private TagLinkedQueue() {
 			head = newDNode(null);
 			head.tag = head;
 		}
-
 		@Override
-		public void clear(Handler handler) {
+		public I find(Matcher<I> matcher) {
+			assert matcher != null;
+			LinkedNode node = head.next;
+            for(;;){
+            	if(node==null) return null;
+            	I ret = (I)node.item;
+            	if(matcher.match(ret)){
+            		return ret;
+            	}
+            	node = node.next;
+            }
+		}
+		@Override
+		public void clear(Handler<I> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
 				++i;
-				handler.process(node.item);
+				handler.process((I) node.item);
 				node.tag = null;
 				node.item = null;
 				node = node.next;
@@ -636,12 +676,12 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(org.jfw.jina.util.TagQueue.TagQueueHandler handler) {
+		public void clear(TagQueueHandler<I, T> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
 				++i;
-				handler.process(node.item, node.tag);
+				handler.process((I) node.item, (T) node.tag);
 				node.tag = null;
 				node.item = null;
 				node = node.next;
@@ -658,14 +698,14 @@ public class QueueProviderImpl implements QueueProvider {
 		};
 
 		@Override
-		public void clear(Matcher<Object> matcher) {
+		public void clear(Matcher<I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					node.item = null;
 					node.tag = null;
@@ -689,14 +729,14 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(org.jfw.jina.util.TagQueue.TagQueueMatcher matcher) {
+		public void clear(TagQueueMatcher<I, T> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item, node.tag)) {
+				while ((null != node) && matcher.match((I) node.item, (T) node.tag)) {
 					++i;
 					node.item = null;
 					node.tag = null;
@@ -720,11 +760,11 @@ public class QueueProviderImpl implements QueueProvider {
 		};
 
 		@Override
-		public void free(Handler handler) {
+		public void free(Handler<I> handler) {
 			LinkedNode node = head.next;
 			int i = 1;
 			while (node != null) {
-				handler.process(node.item);
+				handler.process((I) node.item);
 				node.item = null;
 				node.tag = null;
 				++i;
@@ -748,20 +788,20 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public Object peek() {
+		public I peek() {
 			LinkedNode node = head.next;
-			return node != null ? node.item : null;
+			return (I) (node != null ? node.item : null);
 		}
 
 		@Override
-		public Object unsafePeek() {
+		public I unsafePeek() {
 			assert head.next != null;
-			return head.next.item;
+			return (I) head.next.item;
 		}
 
-		public Object unsafePeekLast() {
+		public I unsafePeekLast() {
 			assert head.tag != null;
-			return ((LinkedNode) head.tag).item;
+			return (I) ((LinkedNode) head.tag).item;
 		}
 
 		@Override
@@ -771,7 +811,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public Object poll() {
+		public I poll() {
 			Object ret = null;
 			LinkedNode node = head.next;
 			if (node == null) {
@@ -786,7 +826,7 @@ public class QueueProviderImpl implements QueueProvider {
 			node.item = null;
 			node.tag = null;
 			freeNode(node);
-			return ret;
+			return (I) ret;
 		}
 
 		@Override
@@ -803,14 +843,14 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void remove(Matcher<Object> matcher) {
+		public void remove(Matcher<I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode node = begin;
 				LinkedNode end = null;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					node.item = null;
 					node.tag = null;
 					end = node;
@@ -834,7 +874,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerTo(Queue dest, Matcher<Object> matcher) {
+		public void offerTo(Queue<I> dest, Matcher<I> matcher) {
 			assert dest != null;
 			assert dest instanceof LinkedQueue;
 			assert matcher != null;
@@ -843,7 +883,7 @@ public class QueueProviderImpl implements QueueProvider {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					end = node;
 					node.tag = null;
@@ -873,7 +913,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerTo(Queue dest) {
+		public void offerTo(Queue<I> dest) {
 			assert dest != null;
 			assert dest instanceof LinkedQueue;
 			if (head.next != null) {
@@ -897,7 +937,7 @@ public class QueueProviderImpl implements QueueProvider {
 			LinkedNode last = ((LinkedNode) head.tag);
 			last.next = node;
 			head.tag = node;
-			return node;
+			return (TagNode) node;
 		}
 
 		@Override
@@ -908,18 +948,18 @@ public class QueueProviderImpl implements QueueProvider {
 
 		@Override
 		public TagNode peekTagNode() {
-			return head.next;
+			return (TagNode) head.next;
 		}
 
 		@Override
-		public void removeWithTag(Matcher<Object> matcher) {
+		public void removeWithTag(Matcher<T> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
 				LinkedNode node = begin;
 				LinkedNode end = null;
 				int i = 0;
-				while ((null != node) && matcher.match(node.tag)) {
+				while ((null != node) && matcher.match((T) node.tag)) {
 					node.item = null;
 					node.tag = null;
 					end = node;
@@ -944,7 +984,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerToWithTag(Queue dest, Matcher<Object> matcher) {
+		public void offerToWithTag(Queue<I> dest, Matcher<T> matcher) {
 			assert dest != null;
 			assert dest instanceof LinkedQueue;
 			assert matcher != null;
@@ -953,7 +993,7 @@ public class QueueProviderImpl implements QueueProvider {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.tag)) {
+				while ((null != node) && matcher.match((T) node.tag)) {
 					++i;
 					end = node;
 					node.tag = null;
@@ -979,7 +1019,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerToTagQueue(TagQueue dest) {
+		public void offerToTagQueue(TagQueue<I, T> dest) {
 			assert dest != null;
 			assert dest instanceof TagLinkedQueue;
 			if (head.next != null) {
@@ -994,7 +1034,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerToTagQueue(TagQueue dest, Matcher<Object> matcher) {
+		public void offerToTagQueue(TagQueue<I, T> dest, Matcher<I> matcher) {
 			assert dest != null;
 			assert dest instanceof TagLinkedQueue;
 			assert matcher != null;
@@ -1003,7 +1043,7 @@ public class QueueProviderImpl implements QueueProvider {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.item)) {
+				while ((null != node) && matcher.match((I) node.item)) {
 					++i;
 					end = node;
 					node = node.next;
@@ -1028,7 +1068,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void offerToTagQueueWithTag(TagQueue dest, Matcher<Object> matcher) {
+		public void offerToTagQueueWithTag(TagQueue<I, T> dest, Matcher<T> matcher) {
 			assert dest != null;
 			assert dest instanceof TagLinkedQueue;
 			assert matcher != null;
@@ -1037,7 +1077,7 @@ public class QueueProviderImpl implements QueueProvider {
 				LinkedNode end = null;
 				LinkedNode node = begin;
 				int i = 0;
-				while ((null != node) && matcher.match(node.tag)) {
+				while ((null != node) && matcher.match((T) node.tag)) {
 					++i;
 					end = node;
 					node = node.next;
@@ -1062,13 +1102,13 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void beforeWithTag(Object item, Object tag, Comparator<Object> comparator) {
+		public void beforeWithTag(I item, T tag, Comparator<T> comparator) {
 			LinkedNode target = newDNode(item);
 			target.tag = tag;
 			LinkedNode node = head.next;
 			LinkedNode prev = head;
 			while (node != null) {
-				if (comparator.compare(node.tag, tag) > 0) {
+				if (comparator.compare((T) node.tag, (T) tag) > 0) {
 					target.next = node;
 					prev.next = target;
 					return;
@@ -1081,13 +1121,13 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void beforeWith(Object item, Object tag, Comparator<Object> comparator) {
+		public void beforeWith(I item, T tag, Comparator<I> comparator) {
 			LinkedNode target = newDNode(item);
 			target.tag = tag;
 			LinkedNode node = head.next;
 			LinkedNode prev = head;
 			while (node != null) {
-				if (comparator.compare(node.item, item) > 0) {
+				if (comparator.compare((I) node.item, (I) item) > 0) {
 					target.next = node;
 					prev.next = target;
 					return;
@@ -1106,23 +1146,23 @@ public class QueueProviderImpl implements QueueProvider {
 		public LinkedNode next;
 		public Object tag;
 
-		private LinkedNode(Object item) {
+		private <I> LinkedNode(I item) {
 			this.item = item;
 		}
 
-		private LinkedNode(Object item, Object tag) {
+		private <I, T> LinkedNode(I item, T tag) {
 			this.item = item;
 			this.tag = tag;
 		}
 
 		@Override
-		public Object item() {
-			return item;
+		public <I> I item() {
+			return (I) item;
 		}
 
 		@Override
-		public Object tag() {
-			return tag;
+		public <T> T tag() {
+			return (T) tag;
 		}
 
 		@Override

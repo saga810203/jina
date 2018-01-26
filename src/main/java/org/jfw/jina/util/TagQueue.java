@@ -2,30 +2,30 @@ package org.jfw.jina.util;
 
 import java.util.Comparator;
 
-public interface TagQueue extends Queue{
-	void clear(TagQueueHandler handler);
-	void clear(TagQueueMatcher matcher);
-	TagNode offer(Object item,Object tag);
+public interface TagQueue<I,T> extends Queue<I>{
+	void clear(TagQueueHandler<I,T> handler);
+	void clear(TagQueueMatcher<I,T> matcher);
+	TagNode offer(I item,T tag);
     Object peekTag();
 	Object unsafePeekTag();
     TagNode peekTagNode();
-    void removeWithTag(Matcher<Object> matcher);
-    void offerToWithTag(Queue dest,Matcher<Object> matcher);	
-    void offerToTagQueue(TagQueue dest);
-    void offerToTagQueue(TagQueue dest,Matcher<Object> matcher);
-    void offerToTagQueueWithTag(TagQueue dest,Matcher<Object> matcher);
+    void removeWithTag(Matcher<T> matcher);
+    void offerToWithTag(Queue<I> dest,Matcher<T> matcher);	
+    void offerToTagQueue(TagQueue<I,T> dest);
+    void offerToTagQueue(TagQueue<I,T> dest,Matcher<I> matcher);
+    void offerToTagQueueWithTag(TagQueue<I,T> dest,Matcher<T> matcher);
     
-    void beforeWithTag(Object item,Object tag,Comparator<Object> comparator);
-    void beforeWith(Object item,Object tag,Comparator<Object> comparator);
+    void beforeWithTag(I item,T tag,Comparator<T> comparator);
+    void beforeWith(I item,T tag,Comparator<I> comparator);
     
     public interface TagNode extends Node{
-    	Object tag();
+    <T>	T tag();
     } 
-    public interface TagQueueHandler{
-    	void process(Object item,Object tag);
+    public interface TagQueueHandler<I,T>{
+    	void process(I item,T tag);
     }
-    public interface TagQueueMatcher{
-    	boolean match(Object item,Object tag);
+    public interface TagQueueMatcher<I,T>{
+    	boolean match(I item,T tag);
     }
 
 }

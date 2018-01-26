@@ -46,7 +46,7 @@ public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> impl
 	protected HttpServerRequest request = null;
 	protected HttpServerResponse response = null;
 	protected LineParser lineParser = new LineParser(8192);
-	protected TagQueue inputCache;
+	protected TagQueue<InputBuf,Integer> inputCache;
 
 	protected HttpService service = new HttpService();
 

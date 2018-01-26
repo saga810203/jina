@@ -24,11 +24,12 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 		KEEP_ALIVE_CONFIG.setKeepAliveTimeout(1000 * 20);
 	}
 
-	private final DQueue keepAliveQueue;
+	private final DQueue<KeepAliveCheck> keepAliveQueue;
 	private final long keepAliveTimeout;
-	private final long keepAliveCheckRate;	
+	private final long keepAliveCheckRate;
+
 	public HttpAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, SelectorProvider selectorProvider) {
-		super(group, closeTask,selectorProvider);
+		super(group, closeTask, selectorProvider);
 		Object tmp = group.getParameter("http.keepAliveConfig");
 		KeepAliveConfig kpcfg = (tmp != null && tmp instanceof KeepAliveConfig) ? (KeepAliveConfig) tmp : KEEP_ALIVE_CONFIG;
 		this.keepAliveCheckRate = kpcfg.getKeepAliveCheckRate();
@@ -42,17 +43,16 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 		return keepAliveTimeout;
 	}
 
-	public DQueue getKeepAliveQueue() {
+	public DQueue<KeepAliveCheck> getKeepAliveQueue() {
 		return keepAliveQueue;
 	}
 
-	private final Matcher<Object> keepAliveCheckHandler = new Matcher<Object>() {
+	private final Matcher<KeepAliveCheck> keepAliveCheckHandler = new Matcher<KeepAliveCheck>() {
 		@Override
-		public boolean match(Object item) {
-			KeepAliveCheck kac =(KeepAliveCheck)item;
-			
-			if(System.currentTimeMillis()-kac.getKeepAliveTime() > keepAliveTimeout){
-				kac.keepAliveTimeout();
+		public boolean match(KeepAliveCheck item) {
+
+			if (System.currentTimeMillis() - item.getKeepAliveTime() > keepAliveTimeout) {
+				item.keepAliveTimeout();
 				return true;
 			}
 			return false;
@@ -64,6 +64,7 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 		public void execute(AsyncExecutor executor) throws Throwable {
 			keepAliveQueue.remove(keepAliveCheckHandler);
 		}
+
 		@Override
 		public void completed(AsyncExecutor executor) {
 			executor.schedule(this, keepAliveCheckRate, TimeUnit.MILLISECONDS);
@@ -105,11 +106,7 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 
 	}
 
-
 	public final DateFormatter dateFormatter = new DateFormatter();
-	
 
-	
-	
 	public final byte[] ouputCalcBuffer = new byte[64];
 }

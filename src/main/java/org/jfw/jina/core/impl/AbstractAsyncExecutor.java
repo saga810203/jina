@@ -18,16 +18,15 @@ import org.jfw.jina.util.QueueProvider;
 import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.impl.QueueProviderImpl;
 
-public abstract class AbstractAsyncExecutor extends QueueProviderImpl
-		implements AsyncExecutor, QueueProvider, Runnable {
+public abstract class AbstractAsyncExecutor extends QueueProviderImpl implements AsyncExecutor, QueueProvider, Runnable {
 	public static final long START_TIME = System.nanoTime();
 	public static final int ST_NOT_STARTED = 1;
 	public static final int ST_STARTED = 2;
 	public static final int ST_SHUTTING_DOWN = 3;
 	public static final int ST_SHUTDOWN = 4;
 	// public static final int ST_TERMINATED = 5;
-	private static final AtomicIntegerFieldUpdater<AbstractAsyncExecutor> STATE_UPDATER = AtomicIntegerFieldUpdater
-			.newUpdater(AbstractAsyncExecutor.class, "state");
+	private static final AtomicIntegerFieldUpdater<AbstractAsyncExecutor> STATE_UPDATER = AtomicIntegerFieldUpdater.newUpdater(AbstractAsyncExecutor.class,
+			"state");
 
 	private final AsyncExecutorGroup group;
 	protected final Runnable closeTask;
@@ -36,10 +35,10 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl
 
 	protected ArrayList<Object> objCache = new ArrayList<Object>();
 
-	protected Queue runningTasks = null;
-	private Queue waitTasks = null;
-	private TagQueue delayTasks = null;
-	private Queue syncTasks = null;
+	protected Queue<AsyncTask> runningTasks = null;
+	private Queue<AsyncTask> waitTasks = null;
+	private TagQueue<AsyncTask, Long> delayTasks = null;
+	private Queue<AsyncTask> syncTasks = null;
 
 	public AbstractAsyncExecutor(AsyncExecutorGroup group, Runnable closeTask) {
 		assert null != group;
@@ -119,10 +118,10 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl
 		return (Long) delayTasks.peekTag();
 	}
 
-	private static final Comparator<Object> delayTaskComparator = new Comparator<Object>() {
+	private static final Comparator<Long> delayTaskComparator = new Comparator<Long>() {
 		@Override
-		public int compare(Object o1, Object o2) {
-			long ret = ((Long) o1).longValue() - ((Long) o2).longValue();
+		public int compare(Long o1, Long o2) {
+			long ret = o1.longValue() - o2.longValue();
 			return ret > 0 ? 1 : (ret == 0 ? 0 : -1);
 		}
 	};
@@ -175,7 +174,7 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl
 						lock.unlock();
 					}
 					waitTasks.offerTo(runningTasks);
-					delayTasks.offerTo(runningTasks, delyTaskHandlerMatcher);
+					delayTasks.offerToWithTag(runningTasks, delyTaskHandlerMatcher);
 					handleRunningTask();
 					if (isShuttingDown()) {
 						lock.lock();
@@ -229,29 +228,28 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl
 		return time != null && ((System.nanoTime() - START_TIME - time) >= 0);
 	}
 
-	private final Matcher<Object> delyTaskHandlerMatcher = new Matcher<Object>() {
+	private final Matcher<Long> delyTaskHandlerMatcher = new Matcher<Long>() {
 		@Override
-		public boolean match(Object tag) {
-			return System.nanoTime() - START_TIME - ((Long) tag) >= 0;
+		public boolean match(Long tag) {
+			return System.nanoTime() - START_TIME - tag.longValue() >= 0;
 		}
 	};
 
-	protected final Handler CANCEL_HANDLER = new Handler() {
+	protected final Handler<AsyncTask> CANCEL_HANDLER = new Handler<AsyncTask>() {
 		@Override
-		public void process(Object item) {
-			((AsyncTask) item).cancled(AbstractAsyncExecutor.this);
+		public void process(AsyncTask item) {
+			item.cancled(AbstractAsyncExecutor.this);
 		}
 	};
 
-	protected final Handler RUN_HANDLER = new Handler() {
+	protected final Handler<AsyncTask> RUN_HANDLER = new Handler<AsyncTask>() {
 		@Override
-		public void process(Object item) {
-			AsyncTask task = (AsyncTask) item;
+		public void process(AsyncTask item) {
 			try {
-				task.execute(AbstractAsyncExecutor.this);
-				task.completed(AbstractAsyncExecutor.this);
+				item.execute(AbstractAsyncExecutor.this);
+				item.completed(AbstractAsyncExecutor.this);
 			} catch (Throwable exc) {
-				task.failed(exc, AbstractAsyncExecutor.this);
+				item.failed(exc, AbstractAsyncExecutor.this);
 			}
 			return;
 		}
@@ -267,19 +265,18 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl
 	// runningTasks.processAndFree(CANCEL_HANDLER);
 	// }
 
-	protected final class TimeRunHandler implements Matcher<Object> {
+	protected final class TimeRunHandler implements Matcher<AsyncTask> {
 		private long time;
 		private long begin;
 
 		@Override
-		public boolean match(Object item) {
+		public boolean match(AsyncTask item) {
 			if (System.nanoTime() - begin < time) {
-				AsyncTask task = (AsyncTask) item;
 				try {
-					task.execute(AbstractAsyncExecutor.this);
-					task.completed(AbstractAsyncExecutor.this);
+					item.execute(AbstractAsyncExecutor.this);
+					item.completed(AbstractAsyncExecutor.this);
 				} catch (Throwable exc) {
-					task.failed(exc, AbstractAsyncExecutor.this);
+					item.failed(exc, AbstractAsyncExecutor.this);
 				}
 				return true;
 			} else {
@@ -287,6 +284,7 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl
 			}
 		}
 	}
+
 	protected final TimeRunHandler TIME_RUN_HANDLER = new TimeRunHandler();
 
 	protected void runRunningTasks(final long time) {

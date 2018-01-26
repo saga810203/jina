@@ -1,8 +1,6 @@
 package org.jfw.jina.core.impl;
 
 import java.nio.channels.spi.SelectorProvider;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.jfw.jina.core.AsyncExecutor;
 

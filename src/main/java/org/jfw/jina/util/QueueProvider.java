@@ -3,9 +3,9 @@ package org.jfw.jina.util;
 import org.jfw.jina.util.DQueue.DNode;
 
 public interface QueueProvider {
-	DNode newDNode(Object item);
-	void freeDNode(DNode node);
-	Queue newQueue();
-	DQueue newDQueue();
-	TagQueue newTagQueue();
+	<I>	DNode   newDNode(I item);
+	<I> void freeDNode(DNode  node);
+	<I> Queue<I> newQueue();
+	<I> DQueue<I> newDQueue();
+	<I,T> TagQueue<I,T> newTagQueue();
 }

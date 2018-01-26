@@ -22,9 +22,10 @@ public final  class Http2ProtocolError {
 	public static final byte ERROR_FRAME_INVALID_PAYLOAD_LENGTH = -12;  //WITH PADED;
 	
 	public static final byte ERROR_FRAME_INVALID_STREAM_ID_WITH_CONTINUATION = -13;
-
+	public static final byte ERROR_FRAME_INVALID_WINDOW_UPDATE = -15;	
+	public static final byte ERROR_INVALID_STREAM_ID = -20;
 	
-	public static final byte ERROR_FRAME_INVALID_WINDOW_UPDATE = -15;
+	
 	
 	public static final byte ERROR_INVALID_SETTING_VALUE = -127;
 	
