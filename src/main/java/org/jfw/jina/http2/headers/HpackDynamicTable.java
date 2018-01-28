@@ -58,6 +58,25 @@ public class HpackDynamicTable {
 			return hpackHeaderFields[i];
 		}
 	}
+	
+	public int getIndex(String name){
+		HpackHeaderField field = null;
+		if (head < tail) {
+			for(int i = 0 ; i <head;++i){
+				field= hpackHeaderFields[i];
+				if(field!=null && field.name.equals(name)){
+					
+				}
+			}
+			for(int i = tail; i <hpackHeaderFields.length;++i ){
+				
+			}
+			
+			length = hpackHeaderFields.length - tail + head;
+		} else {
+			length = head - tail;
+		}
+	}
 
 	/**
 	 * Add the header field to the dynamic table. Entries are evicted from the

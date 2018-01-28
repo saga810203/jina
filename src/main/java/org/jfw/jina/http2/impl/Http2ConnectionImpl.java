@@ -4,13 +4,12 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 import org.jfw.jina.http2.Http2AsyncExecutor;
-import org.jfw.jina.http2.Http2ProtocolError;
 import org.jfw.jina.http2.Http2Settings;
 import org.jfw.jina.http2.Http2Stream;
 import org.jfw.jina.util.DQueue;
 import org.jfw.jina.util.Matcher;
 
-public class Http2ConnectionImpl<T extends Http2Stream> extends Http2FrameWriter {
+public abstract class Http2ConnectionImpl extends Http2FrameWriter {
 
 	protected DQueue<Http2Stream>[] streams;
 
@@ -58,6 +57,7 @@ public class Http2ConnectionImpl<T extends Http2Stream> extends Http2FrameWriter
 		;
 		if (lv != null) {
 			this.localHeaderTableSize = lv.longValue();
+			this.localDynaTable.setCapacity(lv);
 		}
 		lv = settings.maxConcurrentStreams();
 		if (lv != null) {
@@ -71,37 +71,10 @@ public class Http2ConnectionImpl<T extends Http2Stream> extends Http2FrameWriter
 		if (iv != null) {
 			this.localMaxFrameSize = iv.intValue();
 		}
-		lv = settings.maxHeaderListSize();
-		if (lv != null) {
-			this.localMaxHeaderListSize = lv.longValue();
-			this.localMaxHeaderListSizeGoAway = this.localMaxHeaderListSize +(this.localMaxHeaderListSize>>>2);
-			if(this.localMaxHeaderListSizeGoAway < this.localMaxHeaderListSize){
-				this.localMaxHeaderListSizeGoAway = Long.MAX_VALUE;
-			}
-		}
 	}
 
-	@Override
-	public void createStream(int streamDependency, short weight, boolean exclusive, boolean endOfStream) {
-		// TODO impl Priority
-		this.createStream(endOfStream);
-	}
 
-	@Override
-	public void createStream(boolean endOfStream) {
-		if (this.streamId != nextStreamId) {
-			this.currentState = Http2ProtocolError.ERROR_INVALID_STREAM_ID;
-			return;
-		}
-		nextStreamId += 2;
 
-	}
-
-	@Override
-	public void resetStream(long error) {
-		// TODO Auto-generated method stub
-
-	}
 
 	@Override
 	public void applySetting(Http2Settings settings) {
@@ -130,75 +103,15 @@ public class Http2ConnectionImpl<T extends Http2Stream> extends Http2FrameWriter
 		}
 		lv = settings.maxHeaderListSize();
 		if (lv != null) {
-			this.remoteMaxHeaderListSize = lv.longValue();
+			if(this.maxHeaderListSize!=Long.MAX_VALUE){
+				this.maxHeaderListSize = lv.longValue();
+			}
 		}
 
 	}
 
-	@Override
-	public void goAway(int lastStreamId, long errorCode) {
-		// TODO Auto-generated method stub
 
-	}
+	
 
-	@Override
-	public void streamWindowUpdate(int size) {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void handleStreamData(int size, boolean endOfStream) {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void handlePriority(int streamDependency, short weight, boolean exclusive) {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void read() {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void setSelectionKey(SelectionKey key) {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void close() {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void connected() {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	protected void handleInputClose() {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	public void keepAliveTimeout() {
-		// TODO Auto-generated method stub
-
-	}
-
-	@Override
-	protected void handleProtocolError() {
-		// TODO Auto-generated method stub
-
-	}
 
 }

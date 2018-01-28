@@ -71,12 +71,12 @@ public class HpackStaticTable {
 	/**
 	 * The number of header fields in the static table.
 	 */
-	static final int length = STATIC_TABLE.size();
+	public static final int length = STATIC_TABLE.size();
 
 	/**
 	 * Return the header field at the given index value.
 	 */
-	static HpackHeaderField getEntry(int index) {
+	public static HpackHeaderField getEntry(int index) {
 		return STATIC_TABLE.get(index - 1);
 	}
 
@@ -85,7 +85,7 @@ public class HpackStaticTable {
 	 * static table. Returns -1 if the header field name is not in the static
 	 * table.
 	 */
-	static int getIndex(CharSequence name) {
+	public static int getIndex(CharSequence name) {
 		Integer index = STATIC_INDEX_BY_NAME.get(name);
 		if (index == null) {
 			return -1;
@@ -93,7 +93,7 @@ public class HpackStaticTable {
 		return index;
 	}
 
-	static int getIndex(String name, String value) {
+	public static int getIndex(String name, String value) {
 		int index = getIndex(name);
 		if (index == -1) {
 			return -1;

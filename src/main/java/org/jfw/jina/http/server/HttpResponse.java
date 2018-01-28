@@ -15,6 +15,8 @@ public interface HttpResponse {
 	void write(byte[] buffer,int index,int length);
 	void flush(byte[] buffer,int index,int length,TaskCompletionHandler task);
 	void flush(TaskCompletionHandler task);
+	void flush();
+	void flush(byte[] buffer,int index,int length);
 	
 	void unsafeContentLength(long length);
 	void unsafeWrite(byte[] buffer,int index,int length);
