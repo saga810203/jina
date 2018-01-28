@@ -4,7 +4,23 @@ import org.jfw.jina.http.HttpHeaders;
 
 
 public interface FrameWriter {
-	void writeResponseHeader(int streamId, int stauts, HttpHeaders headers, boolean endStream);
+	/**
+	 * 
+	 * @param streamId
+	 * @param responseStatus
+	 * @param headers
+	 * @param endofStream
+	 * @return false( > MAX_HEADER_LIST_SIZE)
+	 */
+	boolean writeHeaders(int streamId, int responseStatus, HttpHeaders headers, boolean endofStream);
+	/**
+	 * 
+	 * @param streamId
+	 * @param headers
+	 * @param endOfStream
+	 * @return false( > MAX_HEADER_LIST_SIZE)
+	 */
+	boolean writeHeaders(int streamId,HttpHeaders headers,boolean endOfStream);
 
 	void writePriority(int streamId, int streamDependency, short weight, boolean exclusive);
 

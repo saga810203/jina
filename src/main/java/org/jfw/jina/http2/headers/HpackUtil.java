@@ -272,7 +272,7 @@ public class HpackUtil {
             0x3fffffff // EOS
     };
 
-    static final byte[] HUFFMAN_CODE_LENGTHS = {
+    public static final byte[] HUFFMAN_CODE_LENGTHS = {
             13, 23, 28, 28, 28, 28, 28, 28, 28, 24, 30, 28, 28, 30, 28, 28,
             28, 28, 28, 28, 28, 28, 30, 28, 28, 28, 28, 28, 28, 28, 28, 28,
             6, 10, 10, 12, 13, 6, 8, 11, 10, 10, 8, 11, 8, 6, 6, 6,
@@ -292,7 +292,7 @@ public class HpackUtil {
             30 // EOS
     };
 
-    static final int HUFFMAN_EOS = 256;
+    public static final int HUFFMAN_EOS = 256;
 
     private HpackUtil() {
         // utility class

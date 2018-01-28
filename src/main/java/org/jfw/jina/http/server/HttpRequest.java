@@ -12,6 +12,8 @@ public interface HttpRequest {
 	String queryString();
 	String hash();
 	HttpHeaders headers();
+	void suspendRead();
+	void resumeRead(); 
 	void setRequestExecutor(RequestExecutor builder);
 	void abort();
 	public interface RequestExecutor{
