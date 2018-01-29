@@ -98,6 +98,9 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 	protected long streamIdOfHeaders = INVALID_STREAM_ID;
 
 	protected byte currentState = FRAME_STATE_READ_HEADER;
+	
+	protected boolean goAwayRecved = false;
+
 
 	protected Http2FrameReader(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key) {
 		this.executor = executor;
@@ -814,15 +817,19 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 						byte b = readByteInQueue(this.headersPayload);
 						--cacheHeaderLength;
 						if (b < 0) {
+							/*b = (-128~ -1)*/
 							index = b & 0x7F;
+							/*index =(0~127)  */
 							switch (index) {
-								case 0:
+								case 0:/*index=0  b = -128 */
 									this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
 									return null;
 								case 0x7F:
+									/* index = 127  b = -1*/
 									state = READ_INDEXED_HEADER;
 									break;
 								default:
+									/*index=(1~126)   b =(-127~ -2)*/
 									header = indexHeader(index);
 									if (header == null) {
 										this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
@@ -831,17 +838,21 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 									headers.add(header.name, header.value);
 							}
 						} else if ((b & 0x40) == 0x40) {
+							/*b = (64~127)*/
 							// Literal Header Field with Incremental Indexing
 							indexType = HpackUtil.IndexType.INCREMENTAL;
 							index = b & 0x3F;
 							switch (index) {
 								case 0:
+									/*b = 64  index = 0 */
 									state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
 									break;
 								case 0x3F:
+									/*b =127  index = 63*/
 									state = READ_INDEXED_HEADER_NAME;
 									break;
 								default:
+									/*b = (65~126)  index = (1~62)*/
 									header = indexHeader(index);
 									if (header == null) {
 										this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
@@ -851,28 +862,35 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 									state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
 							}
 						} else if ((b & 0x20) == 0x20) {
+							/*b = 32 ~ 63*/
 							// Dynamic Table Size Update
 							index = b & 0x1F;
-							if (index == 0x1F) {
+							if (index == 0x1F) {/*b = 63   index == 31*/
 								state = READ_MAX_DYNAMIC_TABLE_SIZE;
 							} else {
+								/*b = 32~ 62   index = 0~ 30*/
 								this.remoteDynaTable.setCapacity(index);
 								state = READ_HEADER_REPRESENTATION;
 							}
 						} else {
+							/*b = 0 ~31*/
 							// Literal Header Field without Indexing / never
 							// Indexed
 							indexType = ((b & 0x10) == 0x10) ? HpackUtil.IndexType.NEVER : HpackUtil.IndexType.NONE;
 							index = b & 0x0F;
+		
 							switch (index) {
 								case 0:
+									/*index = 0 , b =(0 , 16) */
 									state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
 									break;
 								case 0x0F:
+									/*index  = 15,   b=(15,31)*/
 									state = READ_INDEXED_HEADER_NAME;
 									break;
 								default:
 									// Index was stored as the prefix
+									/*index = (1~14) , b =(1~14 ,17~30) */
 									header = indexHeader(index);
 									if (header == null) {
 										this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;

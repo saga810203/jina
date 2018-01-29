@@ -596,6 +596,7 @@ public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> impl
 		response.setStatus(HttpResponseStatus.INTERNAL_SERVER_ERROR);
 		response.unsafeContentLength(buf.length);
 		response.unsafeWrite(buf, 0, buf.length);
+		response.unsafeFlush();
 		request.setRequestExecutor(IGRONE_EXECUTOR);
 	}
 

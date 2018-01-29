@@ -15,6 +15,8 @@ public abstract class Http2ConnectionImpl extends Http2FrameWriter {
 
 	protected int nextStreamId = 1;
 	protected int streamHashNum;
+	
+	protected int activeStreams= 0;
 
 	@SuppressWarnings("unchecked")
 	public Http2ConnectionImpl(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key, Http2Settings settings, int streamHashNum) {

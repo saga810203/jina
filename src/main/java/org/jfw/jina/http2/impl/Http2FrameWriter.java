@@ -1,13 +1,7 @@
 package org.jfw.jina.http2.impl;
 
-import static java.lang.Math.max;
-import static java.lang.Math.min;
-
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
-import java.util.Arrays;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
 
 import org.jfw.jina.buffer.InputBuf;
@@ -23,7 +17,6 @@ import org.jfw.jina.http2.headers.HpackDynamicTable;
 import org.jfw.jina.http2.headers.HpackHeaderField;
 import org.jfw.jina.http2.headers.HpackStaticTable;
 import org.jfw.jina.http2.headers.HpackUtil.IndexType;
-import org.jfw.jina.util.StringUtil;
 
 public abstract class Http2FrameWriter extends Http2FrameReader implements FrameWriter {
 
@@ -52,13 +45,13 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 	protected Throwable lastWriteException;
 
 	protected HpackDynamicTable localDynaTable = new HpackDynamicTable(4096);
-	
-	
-	protected List<HpackHeaderField> enabledDynaTable = new LinkedList<HpackHeaderField>();
 
+	protected HpackEncoder hpackEncoder;
+	protected boolean goAwaySended = false;
 	protected Http2FrameWriter(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key) {
 		super(executor, javaChannel, key);
 		newCache();
+		this.hpackEncoder = new HpackEncoder();
 	}
 
 	private void newCache() {
@@ -78,17 +71,27 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 	}
 
 	public boolean writeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
+		Frame frame = this.hpackEncoder.encodeHeaders(streamId, headers, endOfStream);
+		if (frame == null)
 
-		OutputBuf buf = executor.allocBuffer();
-		OutputBuf headBuf = buf.keepHead(9);
+			return false;
 
-		return false;
-
+		while (frame != null) {
+			this.writeFrame(frame);
+			frame = frame.next;
+		}
+		return true;
 	}
 
-	public boolean writeHeaders(int streamId, int responseStatus, HttpHeaders headers, boolean endofStream) {
-
-		return false;
+	public boolean writeHeaders(int streamId, int responseStatus, HttpHeaders headers, boolean endOfStream) {
+		Frame frame = this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, endOfStream);
+		if (frame == null)
+			return false;
+		while (frame != null) {
+			this.writeFrame(frame);
+			frame = frame.next;
+		}
+		return true;
 	}
 
 	@Override
@@ -464,7 +467,6 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 	}
 
 	final class HpackEncoder {
-		private long size;
 		private Frame firstHeaderFrame = null;
 		private Frame currHeaderFrame = null;
 		private OutputBuf headBuf = null;
@@ -475,8 +477,6 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 		private int streamId = 0;
 		private long headTotalSize = 0;
 		private long currHeadSize = 0;
-
-
 
 		private void reset() {
 			this.firstHeaderFrame = new Frame();
@@ -497,6 +497,7 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 				throw new UnsupportedOperationException("header invalid(name or value is too large)");
 			}
 			this.currentBufLength -= length;
+			this.encoderHeadLength += length;
 		}
 
 		private void swichFrame() {
@@ -555,7 +556,7 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 			this.streamId = streamId;
 			this.endOfStream = endOfStream;
 			reset();
-  		    // To ensure we stay consistent with our peer check the size is
+			// To ensure we stay consistent with our peer check the size is
 			// valid before we potentially modify HPACK state.
 			for (Map.Entry<String, String> header : headers) {
 				String name = header.getKey();
@@ -572,6 +573,43 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 				encodeHeader(name, value);
 
 			}
+			this.endFrame();
+			Frame ret = this.firstHeaderFrame;
+			this.firstHeaderFrame = null;
+			return ret;
+		}
+
+		public Frame encodeHeaders(int streamId, int status, HttpHeaders headers, boolean endOfStream) {
+			this.streamId = streamId;
+			this.endOfStream = endOfStream;
+			reset();
+			// To ensure we stay consistent with our peer check the size is
+			// valid before we potentially modify HPACK state.
+			String name = ":status";
+			String value = Integer.toString(status);
+			currHeadSize = name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD;
+			headTotalSize += currHeadSize;
+			if (headTotalSize > maxHeaderListSize) {
+				this.freeFrame();
+				return null;
+			}
+			encodeHeader(name, value);
+
+			for (Map.Entry<String, String> header : headers) {
+				name = header.getKey();
+				value = header.getValue();
+				// OK to increment now and check for bounds after because this
+				// value is limited to unsigned int and will not
+				// overflow.
+				currHeadSize = name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD;
+				headTotalSize += currHeadSize;
+				if (headTotalSize > maxHeaderListSize) {
+					this.freeFrame();
+					return null;
+				}
+				encodeHeader(name, value);
+			}
+			this.endFrame();
 			Frame ret = this.firstHeaderFrame;
 			this.firstHeaderFrame = null;
 			return ret;
@@ -591,9 +629,9 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 				return;
 			}
 
-			HeaderEntry headerField = getEntry(name, value);
-			if (headerField != null) {
-				int index = getIndex(headerField.index) + HpackStaticTable.length;
+			int index = localDynaTable.getIndex(name, value);
+			if (index != 0) {
+				index += HpackStaticTable.length;
 				// Section 6.1. Indexed Header Field Representation
 				encodeInteger(0x80, 7, index);
 			} else {
@@ -603,13 +641,17 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 					encodeInteger(0x80, 7, staticTableIndex);
 				} else {
 					ensureCapacity();
-					encodeLiteral(name, value, IndexType.INCREMENTAL, getNameIndex(name));
-					add(name, value);
+					IndexType it = isAppendToHeaderTable(name, value) ? IndexType.INCREMENTAL : IndexType.NONE;
+					if (it == IndexType.INCREMENTAL) {
+						ensureCapacity();
+					}
+					encodeLiteral(name, value, it, getNameIndex(name));
+					if (it == IndexType.INCREMENTAL) {
+						localDynaTable.add(new HpackHeaderField(name, value));
+					}
 				}
 			}
 		}
-
-	
 
 		/**
 		 * Encode integer according to
@@ -652,6 +694,7 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 					this.currentBuf.writeByte(string.charAt(begin));
 				}
 				this.currentBufLength -= num;
+				this.encoderHeadLength += num;
 				if (begin >= end)
 					break;
 			}
@@ -684,8 +727,8 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 		private int getNameIndex(String name) {
 			int index = HpackStaticTable.getIndex(name);
 			if (index == -1) {
-				index = getIndex(name);
-				if (index >= 0) {
+				index = localDynaTable.getIndex(name);
+				if (index > 0) {
 					index += HpackStaticTable.length;
 				}
 			}
@@ -698,200 +741,17 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 		 * sufficient space is available.
 		 */
 		private void ensureCapacity() {
-			while (localHeaderTableSize - size < currHeadSize) {
-				int index = length();
-				if (index == 0) {
-					break;
-				}
-				remove();
-			}
-		}
-
-
-
-		/**
-		 * Return the header field at the given index. Exposed for testing.
-		 */
-		HpackHeaderField getHeaderField(int index) {
-			HeaderEntry entry = head;
-			while (index-- >= 0) {
-				entry = entry.before;
-			}
-			return entry;
-		}
-
-		/**
-		 * Returns the header entry with the lowest index value for the header
-		 * field. Returns null if header field is not in the dynamic table.
-		 */
-		private HeaderEntry getEntry(String name, String value) {
-			if (length() == 0 || name == null || value == null) {
-				return null;
-			}
-			int h = name.hashCode();
-			int i = index(h);
-			for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
-				// To avoid short circuit behavior a bitwise operator is used
-				// instead of a boolean operator.
-				if (e.hash == h && name.equals(e.name) && value.equals(e.value)) {
-					return e;
-				}
-			}
-			return null;
-		}
-
-		/**
-		 * Returns the lowest index value for the header field name in the
-		 * dynamic table. Returns -1 if the header field name is not in the
-		 * dynamic table.
-		 */
-		private int getIndex(String name) {
-			if (localDynaTable.length()==0) || name == null) {
-				return -1;
-			}
-			return localDynaTable.
-			
-			int h = name.hashCode();
-			int i = index(h);
-			for (HeaderEntry e = headerFields[i]; e != null; e = e.next) {
-				if (e.hash == h && name.equals(e.name)) {
-					return getIndex(e.index);
-				}
-			}
-			return -1;
-		}
-
-		/**
-		 * Compute the index into the dynamic table given the index in the
-		 * header entry.
-		 */
-		private int getIndex(int index) {
-			return index == -1 ? -1 : index - head.before.index + 1;
-		}
-
-		/**
-		 * Add the header field to the dynamic table. Entries are evicted from
-		 * the dynamic table until the size of the table and the new header
-		 * field is less than the table's maxHeaderTableSize. If the size of the
-		 * new entry is larger than the table's maxHeaderTableSize, the dynamic
-		 * table will be cleared.
-		 */
-		private void add(String name, String value) {
-			// Clear the table if the header field size is larger than the
-			// maxHeaderTableSize.
-			if (currHeadSize > localHeaderTableSize) {
-				clear();
-				return;
-			}
-
-			// Evict oldest entries until we have enough maxHeaderTableSize.
-			while (localHeaderTableSize - size < currHeadSize) {
-				remove();
-			}
-
-			int h = name.hashCode();
-			int i = index(h);
-			HeaderEntry old = headerFields[i];
-			HeaderEntry e = new HeaderEntry(h, name, value, head.before.index - 1, old);
-			headerFields[i] = e;
-			e.addBefore(head);
-			size += currHeadSize;
-		}
-
-		/**
-		 * Remove and return the oldest header field from the dynamic table.
-		 */
-		private HpackHeaderField remove() {
-			if (size == 0) {
-				return null;
-			}
-			HeaderEntry eldest = head.after;
-			int h = eldest.hash;
-			int i = index(h);
-			HeaderEntry prev = headerFields[i];
-			HeaderEntry e = prev;
-			while (e != null) {
-				HeaderEntry next = e.next;
-				if (e == eldest) {
-					if (prev == eldest) {
-						headerFields[i] = next;
-					} else {
-						prev.next = next;
+			long size = 0;
+			for (;;) {
+				size = localDynaTable.size();
+				if (localHeaderTableSize - size < currHeadSize) {
+					if (localDynaTable.length() > 0) {
+						localDynaTable.remove();
 					}
-					eldest.remove();
-					size -= eldest.size();
-					return eldest;
+				} else {
+					return;
 				}
-				prev = e;
-				e = next;
 			}
-			return null;
-		}
-
-		/**
-		 * Remove all entries from the dynamic table.
-		 */
-		private void clear() {
-			Arrays.fill(headerFields, null);
-			head.before = head.after = head;
-			size = 0;
-		}
-
-		/**
-		 * Returns the index into the hash table for the hash code h.
-		 */
-		private int index(int h) {
-			return h & hashMask;
-		}
-
-	}
-
-	/**
-	 * A linked hash map HpackHeaderField entry.
-	 */
-	private static final class HeaderEntry extends HpackHeaderField {
-		// These fields comprise the doubly linked list used for iteration.
-		HeaderEntry before, after;
-
-		// These fields comprise the chained list for header fields with the
-		// same hash.
-		HeaderEntry next;
-		int hash;
-
-		// This is used to compute the index in the dynamic table.
-		int index;
-
-		/**
-		 * Creates new entry.
-		 */
-		HeaderEntry(int hash, String name, String value, int index, HeaderEntry next) {
-			super(name, value);
-			this.index = index;
-			this.hash = hash;
-			this.next = next;
-		}
-
-		/**
-		 * Removes this entry from the linked list.
-		 */
-		private void remove() {
-			before.after = after;
-			after.before = before;
-			before = null; // null references to prevent nepotism in
-							// generational GC.
-			after = null;
-			next = null;
-		}
-
-		/**
-		 * Inserts this entry before the specified existing entry in the list.
-		 */
-		private void addBefore(HeaderEntry existingEntry) {
-			after = existingEntry;
-			before = existingEntry.before;
-			before.after = this;
-			after.before = this;
 		}
 	}
-
 }

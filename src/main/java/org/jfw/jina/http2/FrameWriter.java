@@ -35,4 +35,7 @@ public interface FrameWriter {
 	void recvSettingAck();
 	void recvPingAck(byte[] buffer);
 	void windowUpdate(int size);
+	
+	
+    boolean isAppendToHeaderTable(String name,String value);
 }

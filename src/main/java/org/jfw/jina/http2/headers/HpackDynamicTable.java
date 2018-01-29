@@ -58,24 +58,59 @@ public class HpackDynamicTable {
 			return hpackHeaderFields[i];
 		}
 	}
-	
-	public int getIndex(String name){
+
+	public int getIndex(String name) {
 		HpackHeaderField field = null;
 		if (head < tail) {
-			for(int i = 0 ; i <head;++i){
-				field= hpackHeaderFields[i];
-				if(field!=null && field.name.equals(name)){
-					
+			for (int i = 0; i < head; ++i) {
+				field = hpackHeaderFields[i];
+				if (field.name.equals(name)) {
+					return head - i;
 				}
 			}
-			for(int i = tail; i <hpackHeaderFields.length;++i ){
-				
+			int len = hpackHeaderFields.length - 1;
+			for (int i = tail; i <= len; ++i) {
+				field = hpackHeaderFields[i];
+				if (field.name.equals(name)) {
+					return len - i + head;
+				}
 			}
-			
-			length = hpackHeaderFields.length - tail + head;
 		} else {
-			length = head - tail;
+			for (int i = tail; i < head; ++i) {
+				field = hpackHeaderFields[i];
+				if (field.name.equals(name)) {
+					return head - i;
+				}
+			}
 		}
+		return -1;
+	}
+	
+	public int getIndex(String name,String value) {
+		HpackHeaderField field = null;
+		if (head < tail) {
+			for (int i = 0; i < head; ++i) {
+				field = hpackHeaderFields[i];
+				if (field.name.equals(name) && field.value.equals(value)) {
+					return head - i;
+				}
+			}
+			int len = hpackHeaderFields.length - 1;
+			for (int i = tail; i <= len; ++i) {
+				field = hpackHeaderFields[i];
+				if (field.name.equals(name) && field.value.equals(value)) {
+					return len - i + head;
+				}
+			}
+		} else {
+			for (int i = tail; i < head; ++i) {
+				field = hpackHeaderFields[i];
+				if (field.name.equals(name) && field.value.equals(value)) {
+					return head - i;
+				}
+			}
+		}
+		return -1;
 	}
 
 	/**

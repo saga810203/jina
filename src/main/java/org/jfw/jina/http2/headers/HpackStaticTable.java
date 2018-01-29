@@ -85,7 +85,7 @@ public class HpackStaticTable {
 	 * static table. Returns -1 if the header field name is not in the static
 	 * table.
 	 */
-	public static int getIndex(CharSequence name) {
+	public static int getIndex(String name) {
 		Integer index = STATIC_INDEX_BY_NAME.get(name);
 		if (index == null) {
 			return -1;

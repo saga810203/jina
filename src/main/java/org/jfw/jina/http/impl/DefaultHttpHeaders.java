@@ -209,6 +209,9 @@ public class DefaultHttpHeaders implements WritableHttpHeaders {
 		this.head = null;
 		return this;
 	}
+	public boolean isEmpty(){
+		return null== head;
+	}
 	
 	
 	public boolean contains(String name,String value){
