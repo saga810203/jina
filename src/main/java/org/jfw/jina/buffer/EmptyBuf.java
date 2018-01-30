@@ -159,7 +159,7 @@ public final class EmptyBuf implements InputBuf {
 
 	@Override
 	public int readBytes(GatheringByteChannel out) throws IOException {
-		throw new UnsupportedOperationException();
+		return Integer.MAX_VALUE;
 	}
 
 	@Override

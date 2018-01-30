@@ -2,10 +2,10 @@ package org.jfw.jina.util;
 
 public interface Queue<I> {
 	boolean isEmpty();
-	void clear(Handler<I> handler);
-	void clear(Matcher<I> matcher);
-	void free(Handler<I> handler);
-	I find(Matcher<I> matcher);
+	void clear(Handler<? super I> handler);
+	void clear(Matcher<? super I> matcher);
+	void free(Handler<? super I> handler);
+	I find(Matcher<? super I> matcher);
 	Node offer(I item);
     I peek();
     I poll();

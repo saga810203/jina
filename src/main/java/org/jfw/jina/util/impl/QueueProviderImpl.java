@@ -103,7 +103,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(Handler<I> handler) {
+		public void clear(Handler<? super I> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
@@ -124,7 +124,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void free(Handler<I> handler) {
+		public void free(Handler<? super I> handler) {
 			LinkedNode node = head.next;
 			int i = 1;
 			while (node != null) {
@@ -199,18 +199,20 @@ public class QueueProviderImpl implements QueueProvider {
 			assert head.tag != null;
 			return (I) ((LinkedNode) head.tag).item;
 		}
+
 		@Override
-		public I find(Matcher<I> matcher) {
+		public I find(Matcher<? super I> matcher) {
 			assert matcher != null;
 			LinkedNode node = head.next;
-            for(;;){
-            	if(node==null) return null;
-            	I ret = (I)node.item;
-            	if(matcher.match(ret)){
-            		return ret;
-            	}
-            	node = node.next;
-            }
+			for (;;) {
+				if (node == null)
+					return null;
+				I ret = (I) node.item;
+				if (matcher.match(ret)) {
+					return ret;
+				}
+				node = node.next;
+			}
 		}
 
 		@Override
@@ -296,7 +298,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(Matcher<I> matcher) {
+		public void clear(Matcher<? super I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
@@ -324,9 +326,6 @@ public class QueueProviderImpl implements QueueProvider {
 				}
 			}
 		}
-
-
-
 	}
 
 	public class DeLinkedQueue<I> implements DQueue<I> {
@@ -336,21 +335,24 @@ public class QueueProviderImpl implements QueueProvider {
 			head = newDNode(null);
 			head.tag = head;
 		}
+
 		@Override
-		public I find(Matcher<I> matcher) {
+		public I find(Matcher<? super I> matcher) {
 			assert matcher != null;
 			LinkedNode node = head.next;
-            for(;;){
-            	if(node==null) return null;
-            	I ret = (I)node.item;
-            	if(matcher.match(ret)){
-            		return ret;
-            	}
-            	node = node.next;
-            }
+			for (;;) {
+				if (node == null)
+					return null;
+				I ret = (I) node.item;
+				if (matcher.match(ret)) {
+					return ret;
+				}
+				node = node.next;
+			}
 		}
+
 		@Override
-		public void clear(Handler<I> handler) {
+		public void clear(Handler<? super I> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
@@ -372,7 +374,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(Matcher<I> matcher) {
+		public void clear(Matcher<? super I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
@@ -403,7 +405,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void free(Handler<I> handler) {
+		public void free(Handler<? super I> handler) {
 			LinkedNode node = head.next;
 			int i = 1;
 			while (node != null) {
@@ -640,21 +642,24 @@ public class QueueProviderImpl implements QueueProvider {
 			head = newDNode(null);
 			head.tag = head;
 		}
+
 		@Override
-		public I find(Matcher<I> matcher) {
+		public I find(Matcher<? super I> matcher) {
 			assert matcher != null;
 			LinkedNode node = head.next;
-            for(;;){
-            	if(node==null) return null;
-            	I ret = (I)node.item;
-            	if(matcher.match(ret)){
-            		return ret;
-            	}
-            	node = node.next;
-            }
+			for (;;) {
+				if (node == null)
+					return null;
+				I ret = (I) node.item;
+				if (matcher.match(ret)) {
+					return ret;
+				}
+				node = node.next;
+			}
 		}
+
 		@Override
-		public void clear(Handler<I> handler) {
+		public void clear(Handler<? super I> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
@@ -676,7 +681,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(TagQueueHandler<I, T> handler) {
+		public void clear(TagQueueHandler<? super I, T> handler) {
 			LinkedNode node = head.next;
 			int i = 0;
 			while (node != null) {
@@ -698,7 +703,7 @@ public class QueueProviderImpl implements QueueProvider {
 		};
 
 		@Override
-		public void clear(Matcher<I> matcher) {
+		public void clear(Matcher<? super I> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
@@ -729,7 +734,7 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void clear(TagQueueMatcher<I, T> matcher) {
+		public void clear(TagQueueMatcher<? super I, T> matcher) {
 			assert matcher != null;
 			LinkedNode begin = head.next;
 			if (begin != null) {
@@ -760,7 +765,7 @@ public class QueueProviderImpl implements QueueProvider {
 		};
 
 		@Override
-		public void free(Handler<I> handler) {
+		public void free(Handler<? super I> handler) {
 			LinkedNode node = head.next;
 			int i = 1;
 			while (node != null) {

@@ -3,8 +3,8 @@ package org.jfw.jina.util;
 import java.util.Comparator;
 
 public interface TagQueue<I,T> extends Queue<I>{
-	void clear(TagQueueHandler<I,T> handler);
-	void clear(TagQueueMatcher<I,T> matcher);
+	void clear(TagQueueHandler<? super I,T> handler);
+	void clear(TagQueueMatcher<? super I,T> matcher);
 	TagNode offer(I item,T tag);
     Object peekTag();
 	Object unsafePeekTag();

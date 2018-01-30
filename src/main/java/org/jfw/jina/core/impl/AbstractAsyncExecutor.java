@@ -159,12 +159,7 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl implements
 				thread = Thread.currentThread();
 				((ProxyAsyncExecutor) thread).setExecutor(this);
 				for (AsyncTask task : pendingTasks()) {
-					try {
-						task.execute(this);
-						task.completed(this);
-					} catch (Throwable thr) {
-						task.failed(thr, this);
-					}
+					safeInvoke(task, this);
 				}
 				for (;;) {
 					lock.lock();
@@ -245,13 +240,7 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl implements
 	protected final Handler<AsyncTask> RUN_HANDLER = new Handler<AsyncTask>() {
 		@Override
 		public void process(AsyncTask item) {
-			try {
-				item.execute(AbstractAsyncExecutor.this);
-				item.completed(AbstractAsyncExecutor.this);
-			} catch (Throwable exc) {
-				item.failed(exc, AbstractAsyncExecutor.this);
-			}
-			return;
+			safeInvoke(item,  AbstractAsyncExecutor.this);
 		}
 	};
 
@@ -272,12 +261,7 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl implements
 		@Override
 		public boolean match(AsyncTask item) {
 			if (System.nanoTime() - begin < time) {
-				try {
-					item.execute(AbstractAsyncExecutor.this);
-					item.completed(AbstractAsyncExecutor.this);
-				} catch (Throwable exc) {
-					item.failed(exc, AbstractAsyncExecutor.this);
-				}
+				safeInvoke(item,  AbstractAsyncExecutor.this);
 				return true;
 			} else {
 				return false;
@@ -292,6 +276,25 @@ public abstract class AbstractAsyncExecutor extends QueueProviderImpl implements
 		TIME_RUN_HANDLER.time = time;
 		TIME_RUN_HANDLER.begin = System.nanoTime();
 		runningTasks.clear(TIME_RUN_HANDLER);
+	}
+
+	public static  void safeInvoke(AsyncTask task,AsyncExecutor executor){
+		try{
+			task.execute(executor);
+		}catch(Throwable e){
+			task.failed(e, executor);
+			return;
+		}
+		try{
+			task.completed(executor);
+		}catch(Throwable e){
+		}
+	}
+	public static void safeCancle(AsyncTask task,AsyncExecutor executor){
+		try{
+			task.cancled(executor);
+		}catch(Throwable e){
+		}
 	}
 
 }

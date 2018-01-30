@@ -1303,7 +1303,6 @@ public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> impl
 			try {
 				task.completed(executor);
 			} catch (Throwable e) {
-				// Ignore
 			}
 			if (keepAlive) {
 				beginRead();

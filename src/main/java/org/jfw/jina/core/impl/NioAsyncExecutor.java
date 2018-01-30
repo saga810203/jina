@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.jfw.jina.buffer.BufAllocator;
 import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.core.NioAsyncChannel;
+import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
@@ -548,5 +549,18 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 	@Override
 	public List<AsyncTask> pendingTasks() {
 		return new ArrayList<AsyncTask>();
+	}
+	
+	public static void safeInvokeCompleted(TaskCompletionHandler task,AsyncExecutor executor){
+		try{
+			task.completed(executor);
+		}catch(Throwable e){
+		}
+	}
+	public static void safeInvokeFailed(TaskCompletionHandler task,Throwable exc,AsyncExecutor executor){
+		try{
+			task.failed(exc, executor);
+		}catch(Throwable e){
+		}
 	}
 }

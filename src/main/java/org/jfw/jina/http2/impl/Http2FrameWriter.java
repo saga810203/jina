@@ -4,9 +4,12 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.util.Map;
 
+import org.jfw.jina.buffer.EmptyBuf;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
+import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.TaskCompletionHandler;
+import org.jfw.jina.core.impl.NioAsyncExecutor;
 import org.jfw.jina.http.HttpHeaders;
 import org.jfw.jina.http2.FrameWriter;
 import org.jfw.jina.http2.Http2AsyncExecutor;
@@ -47,11 +50,12 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 	protected HpackDynamicTable localDynaTable = new HpackDynamicTable(4096);
 
 	protected HpackEncoder hpackEncoder;
-	protected boolean goAwaySended = false;
+
 	protected Http2FrameWriter(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key) {
 		super(executor, javaChannel, key);
 		newCache();
 		this.hpackEncoder = new HpackEncoder();
+
 	}
 
 	private void newCache() {
@@ -60,7 +64,7 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 		this.cacheIndex = 0;
 	}
 
-	private void writeFrame(Frame frame) {
+	protected void writeFrame(Frame frame) {
 		if (last == null) {
 			first = frame;
 			this.setOpWrite();
@@ -73,9 +77,7 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 	public boolean writeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
 		Frame frame = this.hpackEncoder.encodeHeaders(streamId, headers, endOfStream);
 		if (frame == null)
-
 			return false;
-
 		while (frame != null) {
 			this.writeFrame(frame);
 			frame = frame.next;
@@ -372,12 +374,12 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 				frame = dataFirst;
 				dataFirst = dataFirst.next;
 				frame.next = null;
-				this.writeFrame(frame.next);
+				this.writeFrame(frame);
 			}
 		}
 	}
 
-	protected void writeDataFrame(Frame frame) {
+	public void writeDataFrame(Frame frame) {
 		int dlen = frame.length;
 		if (sendWindowSize >= dlen) {
 			sendWindowSize -= dlen;
@@ -442,10 +444,25 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 			freeFrame(frame);
 			buf.release();
 			if (listenner != null) {
-				listenner.completed(executor);
+				NioAsyncExecutor.safeInvokeCompleted(frame.listenner, executor);
 			}
 		}
 		this.cleanOpWrite();
+	}
+
+	protected void writeCloseFrame() {
+		Frame frame = new Frame();
+		frame.buffer = EmptyBuf.INSTANCE;
+		frame.length = 0;
+		frame.listenner = new TaskCompletionHandler() {
+			@Override
+			public void failed(Throwable exc, AsyncExecutor executor) {
+			}
+			@Override
+			public void completed(AsyncExecutor executor) {
+				close();
+			}
+		};
 	}
 
 	protected Frame newFrame() {
@@ -457,13 +474,46 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 		frame.listenner = null;
 		frame.next = null;
 	}
+	public Frame buildDataFrame(int streamId,byte[] buffer,int index,int length,boolean endOfStream){
+		Frame ret = new Frame();
+		Frame curr = ret;
+		curr.next = null;
+		OutputBuf buf = executor.allocBuffer();
+		OutputBuf head = buf.keepHead(9);
+		for(;;){
+			int payloadLength = Integer.min(length,buf.writableBytes());
+			buf.writeBytes(buffer, index, payloadLength);
+			length-=payloadLength;
+			boolean ok = length==0;
+			head.writeMedium(payloadLength);
+			head.writeByte(FRAME_TYPE_DATA);
+			head.writeByte(ok?(endOfStream?Http2FlagsUtil.END_STREAM:0):0);
+			head.writeInt(streamId);
+			head.release();
+			curr.buffer = buf.input();
+			buf.release();
+			curr.type = FRAME_TYPE_DATA;
+			curr.length = payloadLength;
+			if(ok){
+				return ret;
+			}else{
+				index+=payloadLength;
+				curr.next = new Frame();
+				curr = curr.next;
+				buf = executor.allocBuffer();
+				head = buf.keepHead(9);
+			}
+		}
+	}
+	
+	
 
 	public class Frame {
 		byte type;
 		InputBuf buffer;
-		TaskCompletionHandler listenner;
-		Frame next;
-		int length;
+		public TaskCompletionHandler listenner;
+		public Frame next;
+		public int length;
 	}
 
 	final class HpackEncoder {
@@ -754,4 +804,5 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 			}
 		}
 	}
+
 }

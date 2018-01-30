@@ -8,6 +8,7 @@ import java.nio.channels.SocketChannel;
 import org.jfw.jina.buffer.EmptyBuf;
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.buffer.OutputBuf;
+import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.util.TagQueue;
@@ -18,8 +19,8 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 	protected T executor;
 	protected SocketChannel javaChannel;
 	protected SelectionKey key;
-//	protected final TagQueue inputCache;
-	protected final TagQueue<InputBuf,TaskCompletionHandler> outputCache;
+	// protected final TagQueue inputCache;
+	protected final TagQueue<InputBuf, TaskCompletionHandler> outputCache;
 	protected Throwable writeException;
 
 	protected AbstractNioAsyncChannel(AbstractNioAsyncChannel<? extends T> channel) {
@@ -28,14 +29,14 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.executor = channel.executor;
 		this.key = channel.key;
 		this.key.attach(this);
-//		this.inputCache = channel.inputCache;
+		// this.inputCache = channel.inputCache;
 		this.outputCache = channel.outputCache;
 		this.afterRegister();
 	}
 
 	protected AbstractNioAsyncChannel(T executor, SocketChannel javaChannel) {
 		assert executor.inLoop();
-//		this.inputCache = executor.newTagQueue();
+		// this.inputCache = executor.newTagQueue();
 		this.outputCache = executor.newTagQueue();
 		this.executor = executor;
 		this.javaChannel = javaChannel;
@@ -73,7 +74,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 			}
 		}
-//		this.inputCache.clear(RELEASE_INPUT_BUF);
+		// this.inputCache.clear(RELEASE_INPUT_BUF);
 		this.outputCache.clear(this.WRITE_ERROR_HANDLER);
 	}
 
@@ -161,14 +162,14 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 				} catch (IOException e) {
 					this.writeException = e;
 					this.close();
-					task.failed(e, executor);
+					NioAsyncExecutor.safeInvokeFailed(task, e, executor);
 					return;
 				}
 				if (buf.readable()) {
 					this.setOpWrite();
 				} else {
 					buf.release();
-					task.completed(executor);
+					NioAsyncExecutor.safeInvokeCompleted(task,(AsyncExecutor)executor);
 					return;
 				}
 			}
@@ -225,7 +226,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			}
 			outputCache.unsafeShift();
 			if (task != null) {
-				task.completed(executor);
+				NioAsyncExecutor.safeInvokeCompleted(task, (AsyncExecutor)executor);
 			}
 		}
 		this.cleanOpWrite();
@@ -432,7 +433,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		return buf;
 	}
 
-	protected final TagQueueHandler<InputBuf,TaskCompletionHandler> WRITE_ERROR_HANDLER = new TagQueueHandler<InputBuf,TaskCompletionHandler>() {
+	protected final TagQueueHandler<InputBuf, TaskCompletionHandler> WRITE_ERROR_HANDLER = new TagQueueHandler<InputBuf, TaskCompletionHandler>() {
 		@Override
 		public void process(InputBuf item, TaskCompletionHandler tag) {
 			((InputBuf) item).release();
@@ -448,7 +449,5 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 	// }
 	//
 	// };
-
-
 
 }
