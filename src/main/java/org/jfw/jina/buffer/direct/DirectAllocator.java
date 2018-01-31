@@ -55,12 +55,6 @@ public class DirectAllocator implements BufAllocator {
 	}
 
 
-
-	@Override
-	public OutputBuf compositeBuffer() {
-		return new CompositeOutputBuf(this.buffer());
-	}
-
 	@Override
 	public void support(Relier<byte[]> relier) {
 		relier.use(this.swap);

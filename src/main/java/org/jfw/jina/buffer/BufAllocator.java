@@ -5,7 +5,6 @@ import org.jfw.jina.core.Relier;
 
 public interface BufAllocator {
 	    OutputBuf buffer();
-	    OutputBuf compositeBuffer();
 	    AsyncExecutor executor();
         void support(Relier<byte[]> relier);	    
 }

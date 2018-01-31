@@ -7,6 +7,7 @@ public final class StringUtil {
 	public static final Charset UTF8=Charset.forName("UTF-8");
 	private StringUtil(){}
 	public static final String EMPTY_STRING="";
+	public static final String ZERO_STRING="0";
 	
    public final static char[] DIGITS_CHAR = {
             '0' , '1' , '2' , '3' , '4' , '5' ,

@@ -1,6 +1,5 @@
 package org.jfw.jina.http.server;
 
-import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.http.HttpResponseStatus;
 
@@ -13,16 +12,16 @@ public interface HttpResponse {
 	void addHeader(String name,String value);
 	void setStatus(HttpResponseStatus httpResponseStatus);
 	void write(byte[] buffer,int index,int length);
+	void write(byte[] buffer,int index,int length,TaskCompletionHandler task);
 	void flush(byte[] buffer,int index,int length,TaskCompletionHandler task);
 	void flush(TaskCompletionHandler task);
 	void flush();
 	void flush(byte[] buffer,int index,int length);
-	
 	void unsafeContentLength(long length);
 	void unsafeWrite(byte[] buffer,int index,int length);
-    void unsafeWirte(InputBuf buffer,TaskCompletionHandler task);
-    void unsafeFlush(InputBuf buffer,TaskCompletionHandler task);
-    void unsafeFlush(InputBuf buffer);
+    void unsafeWrite(byte[] buffer,int index,int length,TaskCompletionHandler task);
+    void unsafeFlush(byte[] buffer,int index,int length,TaskCompletionHandler task);
+    void unsafeFlush(byte[] buffer,int index,int length);
     void unsafeFlush(TaskCompletionHandler task);
     void unsafeFlush();
 

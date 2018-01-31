@@ -441,4 +441,5 @@ public class DirectInputBuf implements InputBuf {
 		this.pos = this.limit;
 		return this;
 	}
+
 }

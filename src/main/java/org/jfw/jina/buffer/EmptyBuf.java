@@ -2,6 +2,7 @@ package org.jfw.jina.buffer;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.GatheringByteChannel;
 
@@ -214,5 +215,10 @@ public final class EmptyBuf implements InputBuf {
 	@Override
 	public InputBuf skipAllBytes() {
 		return this;
+	}
+
+	@Override
+	public ByteBuffer unsafeOriginal() {
+		throw new UnsupportedOperationException();
 	}
 }

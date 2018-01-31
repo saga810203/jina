@@ -57,49 +57,49 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 
 	private static final Node ROOT = buildTree(HpackUtil.HUFFMAN_CODES, HpackUtil.HUFFMAN_CODE_LENGTHS);
 
-	protected HpackHuffmanDecoder huffmanDecoder = new HpackHuffmanDecoder();
+	 HpackHuffmanDecoder huffmanDecoder = new HpackHuffmanDecoder();
 
 	// local Setting
 
-	protected boolean localEnablePush = false;
-	protected long localMaxConcurrentStreams = Long.MAX_VALUE;
-	protected int localInitialWindowSize = 65535;
-	protected int localMaxFrameSize = 16777215;
+	 boolean localEnablePush = false;
+	 long localMaxConcurrentStreams = Long.MAX_VALUE;
+	 int localInitialWindowSize = 65535;
+	 int localMaxFrameSize = 16777215;
 
 	// remote Setting
-	protected long remoteHeaderTableSize = 4096;
+	 long remoteHeaderTableSize = 4096;
 
 	// this (MAX_HEADER_LIST_SIZE) unknow so don't check in recv , but send use
 	// remote setting
-	protected long maxHeaderListSize = Long.MAX_VALUE;
+	 long maxHeaderListSize = Long.MAX_VALUE;
 
-	protected int recvWindowSize = 65535;
+	 int recvWindowSize = 65535;
 
-	protected HpackDynamicTable remoteDynaTable = new HpackDynamicTable(4096);
+	 HpackDynamicTable remoteDynaTable = new HpackDynamicTable(4096);
 
-	protected final Http2AsyncExecutor executor;
-	protected final SocketChannel javaChannel;
-	protected final SelectionKey key;
+	 final Http2AsyncExecutor executor;
+	 final SocketChannel javaChannel;
+	 final SelectionKey key;
 
-	protected final byte[] frameReadBuffer = new byte[64];
-	protected int frameHeaderIndex = 0;
+	 final byte[] frameReadBuffer = new byte[64];
+	 int frameHeaderIndex = 0;
 
-	protected int payloadLength = 0;
-	protected byte frameType = 0;
-	protected byte frameFlag = 0;
-	protected int streamId = 0;
+	 int payloadLength = 0;
+	 byte frameType = 0;
+	 byte frameFlag = 0;
+	 int streamId = 0;
 
-	protected Queue<InputBuf> framePayload;
-	protected int payloadIndex = 0;
+	 Queue<InputBuf> framePayload;
+	 int payloadIndex = 0;
 
-	protected Queue<InputBuf> headersPayload;
-	protected Queue<InputBuf> dataPayload;
+	 Queue<InputBuf> headersPayload;
+	 Queue<InputBuf> dataPayload;
 	// protected boolean headerProcessing = false;
-	protected long streamIdOfHeaders = INVALID_STREAM_ID;
+	 long streamIdOfHeaders = INVALID_STREAM_ID;
 
-	protected byte currentState = FRAME_STATE_READ_HEADER;
+	 byte currentState = FRAME_STATE_READ_HEADER;
 
-	protected boolean goAwayed = false;
+	 boolean goAwayed = false;
 
 	protected Http2FrameReader(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key) {
 		this.executor = executor;

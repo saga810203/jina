@@ -234,7 +234,7 @@ public interface OutputBuf {
 	 *             if the specified channel threw an exception during I/O
 	 */
 	int writeBytes(FileChannel in, long position, int length) throws IOException;
-    OutputBuf keepHead(int size);
+    OutputBuf keepHead(int size); 
 	OutputBuf retain();
 	void release();
 	InputBuf input();

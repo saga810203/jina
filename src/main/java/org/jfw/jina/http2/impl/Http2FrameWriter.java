@@ -66,21 +66,24 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 
 	protected void writeFrame(Frame frame) {
 		if (last == null) {
-			first = frame;
+			first =last = frame;
 			this.setOpWrite();
 		} else {
 			last.next = frame;
+			last = frame;
 		}
-		last = frame;
 	}
 
 	public boolean writeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
 		Frame frame = this.hpackEncoder.encodeHeaders(streamId, headers, endOfStream);
 		if (frame == null)
 			return false;
+		Frame tmp = null;;
 		while (frame != null) {
+			tmp = frame.next;
+			frame.next = null;
 			this.writeFrame(frame);
-			frame = frame.next;
+			frame = tmp;
 		}
 		return true;
 	}
@@ -89,11 +92,45 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 		Frame frame = this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, endOfStream);
 		if (frame == null)
 			return false;
+		Frame tmp = null;;
 		while (frame != null) {
+			tmp = frame.next;
+			frame.next = null;
 			this.writeFrame(frame);
-			frame = frame.next;
+			frame = tmp;
 		}
 		return true;
+	}
+	protected boolean writeHeaders(int streamId, int responseStatus, HttpHeaders headers,TaskCompletionHandler task) {
+		assert task!=null;
+		Frame frame = this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, true);
+		if (frame == null)
+			return false;
+		Frame tail = frame;
+		while (tail.next != null) {
+			frame = tail.next;
+			tail.next = null;
+			this.writeFrame(tail);
+			tail = frame;
+		}
+		tail.listenner =task;
+		this.writeFrame(tail);
+		return true;
+	}
+	
+	protected Frame emptyDataFrame(int streamId){
+		OutputBuf buf = executor.allocBuffer();
+		buf.writeMedium(0);
+		buf.writeByte(FRAME_TYPE_DATA);
+		buf.writeByte(Http2FlagsUtil.END_STREAM);
+		buf.writeInt(streamId);
+		Frame frame = new Frame();
+		frame.length = 0;
+		frame.buffer = buf.input();
+		buf.release();
+		frame.type = FRAME_TYPE_DATA;
+		frame.next = null;
+		return frame;
 	}
 
 	@Override
@@ -380,17 +417,22 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 	}
 
 	public void writeDataFrame(Frame frame) {
+		if(dataLast!=null){
+			dataLast.next = frame;
+			dataLast = frame;
+			return;
+		}
 		int dlen = frame.length;
 		if (sendWindowSize >= dlen) {
 			sendWindowSize -= dlen;
 			writeFrame(frame);
 		} else {
 			if (dataFirst == null) {
-				dataFirst = frame;
+				dataFirst =dataLast=frame;
 			} else {
 				dataLast.next = frame;
+				dataLast = frame;
 			}
-			dataLast = frame;
 		}
 	}
 
@@ -505,7 +547,6 @@ public abstract class Http2FrameWriter extends Http2FrameReader implements Frame
 			}
 		}
 	}
-	
 	
 
 	public class Frame {

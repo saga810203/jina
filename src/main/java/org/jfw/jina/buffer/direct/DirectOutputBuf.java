@@ -245,7 +245,4 @@ class DirectOutputBuf implements OutputBuf {
 		assert alloc.executor().inLoop();
 		return writerIndex;
 	}
-	
-    
-
 }

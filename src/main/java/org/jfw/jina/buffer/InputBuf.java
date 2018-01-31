@@ -344,5 +344,4 @@ public interface InputBuf {
      *         The last-visited index If the {@link ByteProcessor#process(byte)} returned {@code false}.
      */
     int forEachByte(ByteProcessor processor);
-	
 }

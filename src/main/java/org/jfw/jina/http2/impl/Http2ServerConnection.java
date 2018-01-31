@@ -1,13 +1,15 @@
-package org.jfw.jina.http2.server;
+package org.jfw.jina.http2.impl;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.TaskCompletionHandler;
+import org.jfw.jina.core.impl.AbstractNioAsyncChannel;
 import org.jfw.jina.core.impl.NioAsyncExecutor;
 import org.jfw.jina.http.HttpConsts;
 import org.jfw.jina.http.HttpHeaders;
@@ -22,7 +24,6 @@ import org.jfw.jina.http2.Http2ProtocolError;
 import org.jfw.jina.http2.Http2Settings;
 import org.jfw.jina.http2.Http2Stream;
 import org.jfw.jina.http2.Http2StreamError;
-import org.jfw.jina.http2.impl.Http2ConnectionImpl;
 import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.Matcher;
 import org.jfw.jina.util.Queue;
@@ -72,6 +73,7 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 			}
 		});
 		if (endOfStream) {
+			stream.state = Http2Stream.STREAM_STATE_CLOSED_REMOTE;
 			this.requestInvoke(stream);
 		} else {
 			if (!stream.suspendRead) {
@@ -89,7 +91,7 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 				stream.requestExecutor.execute(stream, stream);
 			} else {
 				this.writeRstStream(stream.id, 500);
-				stream.reset();
+				removeStream(stream);
 			}
 		}
 	}
@@ -218,27 +220,30 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 	}
 
 	protected void removeStream(ServerHttp2Stream stream) {
-		if (stream.nodeRef != null) {
-			stream.nodeRef.dequeue();
-			executor.freeDNode(stream.nodeRef);
-			stream.nodeRef = null;
-			--activeStreams;
-			if (activeStreams == 0) {
-				if (this.goAwayed) {
-					this.writeCloseFrame();
-				} else {
-					this.addKeepAliveCheck();
-				}
+		assert stream.nodeRef != null;
+		// if (stream.nodeRef != null) {
+		stream.nodeRef.dequeue();
+		executor.freeDNode(stream.nodeRef);
+		stream.nodeRef = null;
+		stream.reset();
+		--activeStreams;
+		if (activeStreams == 0) {
+			if (this.goAwayed) {
+				this.writeCloseFrame();
+			} else {
+				this.addKeepAliveCheck();
 			}
 		}
+		// }
 	}
 
 	public ServerHttp2Stream stream(final int id) {
 		assert (id & 0x1) != 0;
-		int idx = (id >>> 1) & this.streamHashNum;
+
 		if (id == this.lastCreatedStream.id) {
 			return this.lastCreatedStream;
 		}
+		int idx = (id >>> 1) & this.streamHashNum;
 		return streams[idx].find(new Matcher<ServerHttp2Stream>() {
 			@Override
 			public boolean match(ServerHttp2Stream item) {
@@ -249,6 +254,9 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 
 	@Override
 	public void recvHeaders(HttpHeaders headers, boolean endOfStream) {
+		if (goAwayed)
+			return;
+
 		if (this.streamId != this.nextStreamId) {
 			this.currentState = Http2ProtocolError.ERROR_INVALID_STREAM_ID;
 			return;
@@ -285,9 +293,7 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 			this.streams[i].find(new Matcher<ServerHttp2Stream>() {
 				@Override
 				public boolean match(ServerHttp2Stream item) {
-					if (item.state == Http2Stream.STREAM_STATE_OPEN) {
-						list.offer(item);
-					}
+					list.offer(item);
 					return false;
 				}
 			});
@@ -295,39 +301,56 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 		list.free(new Handler<ServerHttp2Stream>() {
 			@Override
 			public void process(ServerHttp2Stream item) {
-				item.reset();
-				removeStream(item);
 				writeRstStream(item.id, errorCode);
+				if (item.state == Http2Stream.STREAM_STATE_OPEN) {
+					safeInvokeRequestError(item, 484);
+				}
+				removeStream(item);
 			}
 		});
+	}
 
+	void safeInvokeRequestError(ServerHttp2Stream stream, int errorCode) {
+		try {
+			stream.requestExecutor.error(stream, errorCode);
+		} catch (Throwable e) {
+		}
 	}
 
 	@Override
 	public void resetStream(long error) {
 		ServerHttp2Stream stream = stream(this.streamId);
-		if (stream != null && stream.state != Http2Stream.STREAM_STATE_CLOSED) {
-			stream.reset();
+		if (stream != null) {
+			if (stream.state == Http2Stream.STREAM_STATE_OPEN) {
+				safeInvokeRequestError(stream, 484);
+			}
 			this.removeStream(stream);
 		}
 	}
 
 	@Override
 	public void goAway(int lastStreamId, long errorCode) {
-		this.goAwayed = true;
-		for (int i = lastStreamId + 2; i < this.nextStreamId; i += 2) {
-			ServerHttp2Stream stream = stream(this.streamId);
-			if (stream != null && stream.state != Http2Stream.STREAM_STATE_CLOSED) {
-				stream.reset();
-				this.removeStream(stream);
-			}
+		if (!goAwayed) {
+			this.writeGoAway(this.lastCreatedStream == null ? 0 : this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
+			this.goAwayed = true;
 		}
+
+		// for (int i = lastStreamId + 2; i < this.nextStreamId; i += 2) {
+		// ServerHttp2Stream stream = stream(this.streamId);
+		// if (stream != null ) {
+		// if(stream.state== Http2Stream.STREAM_STATE_OPEN){
+		// safeInvokeRequestError(stream,484);
+		// }
+		// stream.reset();
+		// this.removeStream(stream);
+		// }
+		// }
 	}
 
 	@Override
 	public void streamWindowUpdate(int size) {
 		ServerHttp2Stream stream = stream(this.streamId);
-		if (stream != null && stream.state != Http2Stream.STREAM_STATE_CLOSED) {
+		if (stream != null) {
 			stream.windowUpdate(size);
 		}
 	}
@@ -335,81 +358,97 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 	@Override
 	public void handleStreamData(int size, boolean endOfStream) {
 		ServerHttp2Stream stream = stream(this.streamId);
-		if (stream != null && stream.state != Http2Stream.STREAM_STATE_CLOSED) {
+		if (stream != null && stream.state == Http2Stream.STREAM_STATE_OPEN) {
 			this.requestBodyRead(stream, size, endOfStream);
 		}
 	}
 
-	private void streamWrite(ServerHttp2Stream stream, Frame frame) {
+	private void streamDataWrite(ServerHttp2Stream stream, Frame frame) {
+		assert stream.state != Http2Stream.STREAM_STATE_CLOSED;
+		assert frame != null;
+		assert frame.next == null;
 		if (null != stream.last) {
 			stream.last.next = frame;
 			stream.last = frame;
-			return;
-		}
-		Frame f = frame;
-		Frame n = null;
-		while (f != null) {
-			n = f.next;
-			f.next = null;
-			if (stream.sendWindowSize >= f.length) {
-				stream.sendWindowSize -= f.length;
-				writeDataFrame(f);
+		} else {
+			if (stream.sendWindowSize >= frame.length) {
+				stream.sendWindowSize -= frame.length;
+				writeDataFrame(frame);
 			} else {
-				if (stream.last == null) {
-					stream.first = stream.last = f;
-				} else {
-					stream.last.next = f;
-					stream.last = f;
-				}
+				stream.first = stream.last = frame;
 			}
-			f = n;
+		}
+	}
+
+	private void streamLastDataWrite(ServerHttp2Stream stream, Frame frame) {
+		assert stream.state != Http2Stream.STREAM_STATE_CLOSED;
+		if (null != stream.last) {
+			stream.last.next = frame;
+			stream.last = frame;
+		} else {
+			if (stream.sendWindowSize >= frame.length) {
+				stream.sendWindowSize -= frame.length;
+				writeDataFrame(frame);
+				stream.state = Http2Stream.STREAM_STATE_CLOSED;
+				removeStream(stream);
+			} else {
+				stream.first = stream.last = frame;
+			}
 		}
 	}
 
 	void streamWrite(ServerHttp2Stream stream, byte[] buffer, int index, int length) {
 		assert buffer != null;
 		assert index >= 0;
-		assert length >= 0;
+		assert length > 0;
 		assert buffer.length >= (index + length);
 		assert stream != null;
-
-		if (length > 0 && stream.state != Http2Stream.STREAM_STATE_CLOSED) {
+		if (stream.state == Http2Stream.STREAM_STATE_CLOSED) {
 			if (stream.resState == HttpResponse.STATE_INIT) {
+				if (!writeHeaders(stream.id, stream.resState, stream.resHeaders, false)) {
+					throw new IllegalArgumentException("response header encoder error");
+				}
 				stream.resState = HttpResponse.STATE_SENDING_DATA;
-				writeHeaders(stream.id, stream.resState, stream.resHeaders, false);
+			} else if (stream.resState == HttpResponse.STATE_SENDED) {
+				throw new IllegalStateException();
 			}
-			this.streamWrite(stream, buildDataFrame(stream.id, buffer, index, length, false));
+			Frame frame = buildDataFrame(stream.id, buffer, index, length, false);
+			Frame f = null;
+			while (frame != null) {
+				f = frame.next;
+				frame.next = null;
+				this.streamDataWrite(stream, frame);
+				frame = f;
+			}
 		}
 	}
 
-	TaskCompletionHandler wrapStreamCloseListener(final ServerHttp2Stream stream, final TaskCompletionHandler task) {
-		return new TaskCompletionHandler() {
-			@Override
-			public void failed(Throwable exc, AsyncExecutor executor) {
-				removeStream(stream);
-				task.failed(exc, executor);
+	void streamWrite(ServerHttp2Stream stream, byte[] buffer, int index, int length, TaskCompletionHandler task) {
+		assert buffer != null;
+		assert index >= 0;
+		assert length > 0;
+		assert buffer.length >= (index + length);
+		assert stream != null;
+		if (stream.state == Http2Stream.STREAM_STATE_CLOSED) {
+			if (stream.resState == HttpResponse.STATE_INIT) {
+				if (!writeHeaders(stream.id, stream.resState, stream.resHeaders, false)) {
+					throw new IllegalArgumentException("response header encoder error");
+				}
+				stream.resState = HttpResponse.STATE_SENDING_DATA;
+			} else if (stream.resState == HttpResponse.STATE_SENDED) {
+				throw new IllegalStateException();
 			}
-
-			@Override
-			public void completed(AsyncExecutor executor) {
-				removeStream(stream);
-				task.completed(executor);
+			Frame frame = buildDataFrame(stream.id, buffer, index, length, false);
+			Frame tail = frame;
+			while (tail.next != null) {
+				frame = tail.next;
+				tail.next = null;
+				this.streamDataWrite(stream, tail);
+				tail = frame;
 			}
-		};
-	}
-
-	TaskCompletionHandler wrapStreamCloseListener(final ServerHttp2Stream stream) {
-		return new TaskCompletionHandler() {
-			@Override
-			public void failed(Throwable exc, AsyncExecutor executor) {
-				removeStream(stream);
-			}
-
-			@Override
-			public void completed(AsyncExecutor executor) {
-				removeStream(stream);
-			}
-		};
+			tail.listenner = task;
+			this.streamDataWrite(stream, tail);
+		}
 	}
 
 	void streamFlush(final ServerHttp2Stream stream, byte[] buffer, int index, int length, final TaskCompletionHandler task) {
@@ -422,70 +461,116 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 
 		if (stream.state != Http2Stream.STREAM_STATE_CLOSED) {
 			if (stream.resState == HttpResponse.STATE_INIT) {
-				writeHeaders(stream.id, stream.resState, stream.resHeaders, false);
+				if (!writeHeaders(stream.id, stream.resState, stream.resHeaders, false)) {
+					throw new IllegalArgumentException("response header encoder error");
+				}
+			} else if (stream.resState == HttpResponse.STATE_SENDED) {
+				throw new IllegalStateException();
 			}
 			stream.resState = HttpResponse.STATE_SENDED;
-			stream.state = Http2Stream.STREAM_STATE_CLOSED;
-			Frame head = buildDataFrame(stream.id, buffer, index, length, true);
-			Frame tail = head;
+			Frame frame = buildDataFrame(stream.id, buffer, index, length, true);
+			Frame tail = frame;
 			while (tail.next != null) {
+				frame = tail;
 				tail = tail.next;
+				frame.next = null;
+				this.streamDataWrite(stream, frame);
 			}
-			tail.listenner =this.wrapStreamCloseListener(stream, task);
-			this.streamWrite(stream, head);
+			tail.listenner = task;
+			this.streamLastDataWrite(stream, tail);
 		} else {
-			NioAsyncExecutor.safeInvokeFailed(task, null, executor);
+			NioAsyncExecutor.safeInvokeFailed(task, this.lastWriteException, executor);
 		}
 
 	}
+
 	void streamFlush(final ServerHttp2Stream stream, final TaskCompletionHandler task) {
 		assert task != null;
 		assert stream != null;
-
 		if (stream.state != Http2Stream.STREAM_STATE_CLOSED) {
 			if (stream.resState == HttpResponse.STATE_INIT) {
-				writeHeaders(stream.id, stream.resState, stream.resHeaders, true);
+				if (writeHeaders(stream.id, stream.resState, stream.resHeaders, task)) {
+					stream.resState = HttpResponse.STATE_SENDED;
+					stream.state = Http2Stream.STREAM_STATE_CLOSED;
+					removeStream(stream);
+					return;
+				}
+				throw new IllegalArgumentException("response header encoder error");
 			}
-			stream.resState = HttpResponse.STATE_SENDED;
-			stream.state = Http2Stream.STREAM_STATE_CLOSED;
-			Frame head = new Frame();
-			head.length=0;
-			head.
-			Frame tail = head;
-			while (tail.next != null) {
-				tail = tail.next;
+			if (stream.resState == HttpResponse.STATE_SENDED) {
+				throw new IllegalStateException();
+			} else {
+				stream.resState = HttpResponse.STATE_SENDED;
 			}
-			tail.listenner =this.wrapStreamCloseListener(stream, task);
-			this.streamWrite(stream, head);
+			Frame frame = emptyDataFrame(stream.id);
+			frame.listenner = task;
+			if (stream.last == null) {
+				stream.state = Http2Stream.STREAM_STATE_CLOSED;
+				this.writeFrame(frame);
+				removeStream(stream);
+				return;
+			}
+			stream.last.next = frame;
+			stream.last = frame;
 		} else {
-			NioAsyncExecutor.safeInvokeFailed(task, null, executor);
+			NioAsyncExecutor.safeInvokeFailed(task, this.lastWriteException, executor);
 		}
+	}
 
-	}	void streamFlush(final ServerHttp2Stream stream, byte[] buffer, int index, int length, final TaskCompletionHandler task) {
+	void streamFlush(final ServerHttp2Stream stream) {
+		assert stream != null;
+		if (stream.state != Http2Stream.STREAM_STATE_CLOSED) {
+			if (stream.resState == HttpResponse.STATE_INIT) {
+				if (writeHeaders(stream.id, stream.resState, stream.resHeaders, true)) {
+					stream.resState = HttpResponse.STATE_SENDED;
+					stream.state = Http2Stream.STREAM_STATE_CLOSED;
+					removeStream(stream);
+					return;
+				}
+				throw new IllegalArgumentException("response header encoder error");
+			} else if (stream.resState == HttpResponse.STATE_SENDED) {
+				throw new IllegalStateException();
+			} else {
+				stream.resState = HttpResponse.STATE_SENDED;
+			}
+			Frame frame = emptyDataFrame(stream.id);
+			if (stream.last == null) {
+				stream.state = Http2Stream.STREAM_STATE_CLOSED;
+				this.writeFrame(frame);
+				removeStream(stream);
+				return;
+			}
+			stream.last.next = frame;
+			stream.last = frame;
+		}
+	}
+
+	void streamFlush(final ServerHttp2Stream stream, byte[] buffer, int index, int length) {
 		assert buffer != null;
 		assert index >= 0;
 		assert length > 0;
 		assert buffer.length >= (index + length);
-		assert task != null;
 		assert stream != null;
 
 		if (stream.state != Http2Stream.STREAM_STATE_CLOSED) {
 			if (stream.resState == HttpResponse.STATE_INIT) {
-				writeHeaders(stream.id, stream.resState, stream.resHeaders, false);
+				if (!writeHeaders(stream.id, stream.resState, stream.resHeaders, false)) {
+					throw new IllegalArgumentException("response header encoder error");
+				}
+			} else if (stream.resState == HttpResponse.STATE_SENDED) {
+				throw new IllegalStateException();
 			}
 			stream.resState = HttpResponse.STATE_SENDED;
-			stream.state = Http2Stream.STREAM_STATE_CLOSED;
-			Frame head = buildDataFrame(stream.id, buffer, index, length, true);
-			Frame tail = head;
+			Frame frame = buildDataFrame(stream.id, buffer, index, length, true);
+			Frame tail = frame;
 			while (tail.next != null) {
-				tail = tail.next;
+				frame = tail.next;
+				tail.next = null;
+				this.streamDataWrite(stream, tail);
+				tail = frame;
 			}
-			tail.listenner =this.wrapStreamCloseListener(stream, task);
-			this.streamWrite(stream, head);
-		} else {
-			NioAsyncExecutor.safeInvokeFailed(task, null, executor);
+			this.streamLastDataWrite(stream, tail);
 		}
-
 	}
 
 	@Override
@@ -518,8 +603,10 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 	@Override
 	protected void handleInputClose() {
 		this.resetAllOpenedStream(0);
-		this.goAwayed = true;
-		this.writeGoAway(this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
+		if (!goAwayed) {
+			this.writeGoAway(this.lastCreatedStream == null ? 0 : this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
+			this.goAwayed = true;
+		}
 	}
 
 	@Override
@@ -530,8 +617,11 @@ public class Http2ServerConnection extends Http2ConnectionImpl<ServerHttp2Stream
 
 	@Override
 	protected void handleProtocolError() {
-		// TODO Auto-generated method stub
-
+		this.resetAllOpenedStream(0);
+		if (!goAwayed) {
+			this.writeGoAway(this.lastCreatedStream == null ? 0 : this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
+			this.goAwayed = true;
+		}
 	}
 
 	@Override
