@@ -5,6 +5,11 @@ import java.nio.charset.Charset;
 
 public final class StringUtil {
 	public static final Charset UTF8=Charset.forName("UTF-8");
+    public static final Charset UTF16 = Charset.forName("UTF-16");
+    public static final Charset UTF16BE = Charset.forName("UTF-16BE");
+    public static final Charset UTF16LE = Charset.forName("UTF-16LE");
+    public static final Charset ISO_8859_1 = Charset.forName("ISO-8859-1");
+    public static final Charset US_ASCII = Charset.forName("US-ASCII");
 	private StringUtil(){}
 	public static final String EMPTY_STRING="";
 	public static final String ZERO_STRING="0";
