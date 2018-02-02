@@ -23,10 +23,9 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLSessionContext;
 
-import org.jfw.jina.buffer.BufAllocator;
 
-import io.netty.handler.ssl.Java9SslEngine;
-import io.netty.handler.ssl.JettyAlpnSslEngine;
+import org.jfw.jina.ssl.engine.JettyAlpnSslEngine;
+
 
 public abstract class JdkSslContext extends SslContext {
 
@@ -79,22 +78,22 @@ public abstract class JdkSslContext extends SslContext {
 	}
 
 	private final String[] protocols;
+	private final String[] appcationProtocols;
 	private final String[] cipherSuites;
 	private final List<String> unmodifiableCipherSuites;
 
-	private final ClientAuth clientAuth;
 	private final SSLContext sslContext;
 	private final boolean isClient;
 
-	public JdkSslContext(SSLContext sslContext, boolean isClient, Iterable<String> ciphers, CipherSuiteFilter cipherFilter, ClientAuth clientAuth,
-			String[] protocols, boolean startTls) {
+	public JdkSslContext(SSLContext sslContext, boolean isClient, Iterable<String> ciphers, CipherSuiteFilter cipherFilter,
+			String[] protocols, boolean startTls,String[] appcationProtocols) {
 		super(startTls);
-		this.clientAuth = clientAuth;
 		cipherSuites = cipherFilter.filterCipherSuites(ciphers, DEFAULT_CIPHERS, SUPPORTED_CIPHERS);
 		this.protocols = protocols == null ? DEFAULT_PROTOCOLS : protocols;
 		unmodifiableCipherSuites = Collections.unmodifiableList(Arrays.asList(cipherSuites));
 		this.sslContext = sslContext;
 		this.isClient = isClient;
+		this.appcationProtocols = appcationProtocols;
 	}
 
 	public final SSLContext context() {
@@ -138,11 +137,22 @@ public abstract class JdkSslContext extends SslContext {
 
 
 
+	@Override
+	public SSLEngine newEngine(String peerHost, int peerPort) {
+		return wrapSSLEngine(context().createSSLEngine(peerHost,peerPort));
+	}
+
 	protected SSLEngine wrapSSLEngine(SSLEngine engine) {
-
+        engine.setEnabledCipherSuites(cipherSuites);
+        engine.setEnabledProtocols(protocols);
+        boolean cliented = isClient();
+        if(cliented){
+        engine.setUseClientMode(true);
+        }else{
+        	engine.setWantClientAuth(false);
+        }
 		// return new Java9SslEngine(engine, applicationNegotiator, isServer);
-
-		return isClient ? JettyAlpnSslEngine.newClientEngine(engine,protocols) : JettyAlpnSslEngine.newServerEngine(engine, protocols);
+		return isClient ? JettyAlpnSslEngine.newClientEngine(engine,appcationProtocols) : JettyAlpnSslEngine.newServerEngine(engine, appcationProtocols);
 
 	}
 

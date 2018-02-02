@@ -14,17 +14,15 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 
 public class JdkSslServerContext extends JdkSslContext {
-	JdkSslServerContext(Provider provider, X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain,
-			PrivateKey key, String keyPassword, KeyManagerFactory keyManagerFactory, Iterable<String> ciphers, CipherSuiteFilter cipherFilter,
-			 long sessionCacheSize, long sessionTimeout, ClientAuth clientAuth, String[] protocols, boolean startTls)
-			throws SSLException {
-		super(newSSLContext(provider, trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, sessionCacheSize,
-				sessionTimeout), false, ciphers, cipherFilter, clientAuth, protocols, startTls);
+	JdkSslServerContext(X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain, PrivateKey key,
+			String keyPassword, KeyManagerFactory keyManagerFactory, Iterable<String> ciphers, CipherSuiteFilter cipherFilter, long sessionCacheSize,
+			long sessionTimeout, ClientAuth clientAuth, String[] protocols, boolean startTls,String[] appcationProtocols) throws SSLException {
+		super(newSSLContext(trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, sessionCacheSize,
+				sessionTimeout), false, ciphers, cipherFilter,protocols, startTls,appcationProtocols);
 	}
 
-	private static SSLContext newSSLContext(Provider sslContextProvider, X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory,
-			X509Certificate[] keyCertChain, PrivateKey key, String keyPassword, KeyManagerFactory keyManagerFactory, long sessionCacheSize, long sessionTimeout)
-			throws SSLException {
+	private static SSLContext newSSLContext(X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain,
+			PrivateKey key, String keyPassword, KeyManagerFactory keyManagerFactory, long sessionCacheSize, long sessionTimeout) throws SSLException {
 		if (key == null && keyManagerFactory == null) {
 			throw new NullPointerException("key, keyManagerFactory");
 		}
@@ -38,7 +36,7 @@ public class JdkSslServerContext extends JdkSslContext {
 			}
 
 			// Initialize the SSLContext to work with our key managers.
-			SSLContext ctx = sslContextProvider == null ? SSLContext.getInstance(PROTOCOL) : SSLContext.getInstance(PROTOCOL, sslContextProvider);
+			SSLContext ctx =SSLContext.getInstance(PROTOCOL);
 			ctx.init(keyManagerFactory.getKeyManagers(), trustManagerFactory == null ? null : trustManagerFactory.getTrustManagers(), null);
 
 			SSLSessionContext sessCtx = ctx.getServerSessionContext();

@@ -4,7 +4,6 @@ package org.jfw.jina.ssl;
 import java.io.File;
 import java.io.InputStream;
 import java.security.PrivateKey;
-import java.security.Provider;
 import java.security.cert.X509Certificate;
 
 import javax.net.ssl.KeyManagerFactory;
@@ -72,7 +71,6 @@ public class SslContextBuilder {
     }
 
     private final boolean forServer;
-    private Provider sslContextProvider;
     private X509Certificate[] trustCertCollection;
     private TrustManagerFactory trustManagerFactory;
     private X509Certificate[] keyCertChain;
@@ -85,6 +83,7 @@ public class SslContextBuilder {
     private long sessionTimeout;
     private ClientAuth clientAuth = ClientAuth.NONE;
     private String[] protocols;
+    private String[] applicationProtocols;
     private boolean startTls;
 
     private SslContextBuilder(boolean forServer) {
@@ -126,10 +125,7 @@ public class SslContextBuilder {
         this.trustManagerFactory = trustManagerFactory;
         return this;
     }
-    public SslContextBuilder sslContextProvider(Provider sslContextProvider) {
-        this.sslContextProvider = sslContextProvider;
-        return this;
-    }
+
 
     public SslContextBuilder keyManager(File keyCertChainFile, File keyFile) {
         return keyManager(keyCertChainFile, keyFile, null);
@@ -273,9 +269,13 @@ public class SslContextBuilder {
      * @param protocols The protocols to enable, or {@code null} to enable the default protocols.
      * @see SSLEngine#setEnabledCipherSuites(String[])
      */
-    public SslContextBuilder protocols(String... protocols) {
+    public SslContextBuilder sslProtocols(String... protocols) {
         this.protocols = protocols == null ? null : protocols.clone();
         return this;
+    }
+    public SslContextBuilder applicationProtocols(String... protocols){
+    	this.applicationProtocols = protocols;
+    	return this;
     }
 
     /**
@@ -295,11 +295,11 @@ public class SslContextBuilder {
      */
     public SslContext build() throws SSLException {
         if (forServer) {
-        	return new JdkSslServerContext(sslContextProvider, trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory,
-					ciphers, cipherFilter, apn, sessionCacheSize, sessionTimeout, clientAuth, protocols, startTls);
+        	return new JdkSslServerContext(trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory,
+					ciphers, cipherFilter,sessionCacheSize, sessionTimeout, clientAuth, protocols, startTls,applicationProtocols);
         } else {
-        	return new JdkSslClientContext(sslContextProvider, trustCert, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, ciphers,
-					cipherFilter, apn, protocols, sessionCacheSize, sessionTimeout);
+        	return new JdkSslClientContext( trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, ciphers,
+					cipherFilter,protocols, sessionCacheSize, sessionTimeout,applicationProtocols);
         }
     }
 }

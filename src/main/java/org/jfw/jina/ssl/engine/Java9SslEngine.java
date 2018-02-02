@@ -18,10 +18,9 @@ import javax.net.ssl.SSLSession;
 
 import org.jfw.jina.ssl.JdkSslContext;
 import org.jfw.jina.util.ArrayUtil;
-import org.jfw.jina.util.StringUtil;
 
 
-public class Java9SslEngine extends SSLEngine {
+public class Java9SslEngine extends JdkSslEngine {
 	private static final Method SET_APPLICATION_PROTOCOLS;
 	private static final Method GET_APPLICATION_PROTOCOL;
 	private static final Method GET_HANDSHAKE_APPLICATION_PROTOCOL;
@@ -96,15 +95,12 @@ public class Java9SslEngine extends SSLEngine {
 		GET_HANDSHAKE_APPLICATION_PROTOCOL_SELECTOR = getHandshakeApplicationProtocolSelector;
 	}
 
-    private final SSLEngine engine;
-	private boolean called;
-	private final String[] supportedProtocols;
-	private String selectProtocol = StringUtil.EMPTY_STRING;
 
 
-	Java9SslEngine(SSLEngine engine, boolean isServer, String[] supportedProtocols) {
-		this.engine = engine;
-		this.supportedProtocols = supportedProtocols;
+
+
+	public Java9SslEngine(SSLEngine engine, boolean isServer, String[] supportedProtocols) {
+		super(engine,supportedProtocols);
 		if (isServer) {
 			try {
 				SET_HANDSHAKE_APPLICATION_PROTOCOL_SELECTOR.invoke(engine, new BiFunction<SSLEngine, List<String>, String>() {
@@ -114,10 +110,11 @@ public class Java9SslEngine extends SSLEngine {
 						called = true;
 						for (int i = 0; i < Java9SslEngine.this.supportedProtocols.length; ++i) {
 							if (u.contains(Java9SslEngine.this.supportedProtocols[i])) {
-								Java9SslEngine.this.selectProtocol = Java9SslEngine.this.supportedProtocols[i];
+								selectedProtocol = Java9SslEngine.this.supportedProtocols[i];
+								return selectedProtocol;
 							}
 						}
-						return Java9SslEngine.this.selectProtocol;
+						return null;
 					}
 				});
 			} catch (UnsupportedOperationException ex) {
@@ -125,7 +122,6 @@ public class Java9SslEngine extends SSLEngine {
 			} catch (Exception ex) {
 				throw new IllegalStateException(ex);
 			}
-
 		} else {
 			   SSLParameters parameters = engine.getSSLParameters();
 		        try {
@@ -146,12 +142,7 @@ public class Java9SslEngine extends SSLEngine {
 	
 
 
-	public boolean isCalled() {
-		return called;
-	}
-	public String getSelectProtocol() {
-		return selectProtocol;
-	}
+
 
 	public String getApplicationProtocol() {
 		try {
@@ -201,11 +192,6 @@ public class Java9SslEngine extends SSLEngine {
     public SSLSession getSession() {
         return engine.getSession();
     }
-
-    public SSLEngine getWrappedEngine() {
-        return engine;
-    }
-
     @Override
     public void closeInbound() throws SSLException {
         engine.closeInbound();

@@ -1,41 +1,35 @@
 package org.jfw.jina.ssl.engine;
 
 import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
 
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
 
 import org.eclipse.jetty.alpn.ALPN;
-import org.jfw.jina.util.StringUtil;
+import org.jfw.jina.ssl.SslUtil;
 
-public class JettyAlpnSslEngine extends SSLEngine {
+public class JettyAlpnSslEngine extends JdkSslEngine {
 
-	protected SSLEngine engine;
-
-	protected String selectedProtocol = StringUtil.EMPTY_STRING;
-	protected boolean called = false;;
-
-	static JettyAlpnSslEngine newClientEngine(SSLEngine engine, String[] protocols) {
+	public static JettyAlpnSslEngine newClientEngine(SSLEngine engine, String[] protocols) {
 		return new ClientEngine(engine, protocols);
 	}
 
-	static JettyAlpnSslEngine newServerEngine(SSLEngine engine, String[] protocols) {
+	public static JettyAlpnSslEngine newServerEngine(SSLEngine engine, String[] protocols) {
 		return new ServerEngine(engine, protocols);
 	}
 
-	private JettyAlpnSslEngine(SSLEngine engine) {
-		this.engine = engine;
+	private JettyAlpnSslEngine(SSLEngine engine,String[] supportedProtocols) {
+		super(engine,supportedProtocols);
 	}
 
 	private static final class ClientEngine extends JettyAlpnSslEngine {
-		ClientEngine(SSLEngine engine, final String[] protocols) {
-			super(engine);
+		ClientEngine(SSLEngine engine, String[] supportedProtocols) {
+			super(engine,supportedProtocols);
 			ALPN.put(engine, new ALPN.ClientProvider() {
 				@Override
 				public List<String> protocols() {
-					return Arrays.asList(protocols);
+					return Arrays.asList(ClientEngine.this.supportedProtocols);
 				}
 
 				@Override
@@ -51,65 +45,53 @@ public class JettyAlpnSslEngine extends SSLEngine {
 			});
 		}
 
-		@Override
-		public void closeInbound() throws SSLException {
-			try {
-				ALPN.remove(getWrappedEngine());
-			} finally {
-				super.closeInbound();
-			}
-		}
-
-		@Override
-		public void closeOutbound() {
-			try {
-				ALPN.remove(getWrappedEngine());
-			} finally {
-				super.closeOutbound();
-			}
-		}
 	}
 
 	private static final class ServerEngine extends JettyAlpnSslEngine {
-		ServerEngine(SSLEngine engine, final JdkApplicationProtocolNegotiator applicationNegotiator) {
-			super(engine);
-			checkNotNull(applicationNegotiator, "applicationNegotiator");
-			final ProtocolSelector protocolSelector = checkNotNull(
-					applicationNegotiator.protocolSelectorFactory().newSelector(this, new LinkedHashSet<String>(applicationNegotiator.protocols())),
-					"protocolSelector");
+		ServerEngine(SSLEngine engine,  String[] supportedProtocols) {
+			super(engine,supportedProtocols);
 			ALPN.put(engine, new ALPN.ServerProvider() {
 				@Override
 				public String select(List<String> protocols) throws SSLException {
+					called = true;
 					try {
-						return protocolSelector.select(protocols);
+						for (int i = 0; i <ServerEngine.this. supportedProtocols.length; ++i) {
+							if (protocols.contains(ServerEngine.this. supportedProtocols[i])) {
+								selectedProtocol = ServerEngine.this. supportedProtocols[i];
+								return selectedProtocol;
+							}
+						}
+						return null;
 					} catch (Throwable t) {
-						throw toSSLHandshakeException(t);
+						throw SslUtil.toSSLHandshakeException(t);
 					}
 				}
-
 				@Override
 				public void unsupported() {
-					protocolSelector.unsupported();
+					called = true;
 				}
 			});
 		}
 
-		@Override
-		public void closeInbound() throws SSLException {
-			try {
-				ALPN.remove(getWrappedEngine());
-			} finally {
-				super.closeInbound();
-			}
-		}
+	}
 
-		@Override
-		public void closeOutbound() {
-			try {
-				ALPN.remove(getWrappedEngine());
-			} finally {
-				super.closeOutbound();
-			}
+	@Override
+	public void closeInbound() throws SSLException {
+		try {
+			ALPN.remove(engine);
+		} finally {
+			engine.closeInbound();
 		}
 	}
+
+	@Override
+	public void closeOutbound() {
+		try {
+			ALPN.remove(engine);
+		} finally {
+			engine.closeOutbound();
+		}
+	}
+
+
 }
