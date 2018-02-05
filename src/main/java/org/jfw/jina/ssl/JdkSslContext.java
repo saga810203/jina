@@ -23,7 +23,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLSessionContext;
 
-
+import org.jfw.jina.ssl.engine.JdkSslEngine;
 import org.jfw.jina.ssl.engine.JettyAlpnSslEngine;
 
 
@@ -130,7 +130,7 @@ public abstract class JdkSslContext extends SslContext {
 	}
 
 	@Override
-	public final SSLEngine newEngine() {
+	public final JdkSslEngine newEngine() {
 		return wrapSSLEngine(context().createSSLEngine());
 	}
 
@@ -138,11 +138,11 @@ public abstract class JdkSslContext extends SslContext {
 
 
 	@Override
-	public SSLEngine newEngine(String peerHost, int peerPort) {
+	public JdkSslEngine newEngine(String peerHost, int peerPort) {
 		return wrapSSLEngine(context().createSSLEngine(peerHost,peerPort));
 	}
 
-	protected SSLEngine wrapSSLEngine(SSLEngine engine) {
+	protected JdkSslEngine wrapSSLEngine(SSLEngine engine) {
         engine.setEnabledCipherSuites(cipherSuites);
         engine.setEnabledProtocols(protocols);
         boolean cliented = isClient();

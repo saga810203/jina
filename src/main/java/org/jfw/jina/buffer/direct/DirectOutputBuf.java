@@ -245,4 +245,8 @@ class DirectOutputBuf implements OutputBuf {
 		assert alloc.executor().inLoop();
 		return writerIndex;
 	}
+	@Override
+	public ByteBuffer original() {
+		return buffer;
+	}
 }

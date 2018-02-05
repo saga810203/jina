@@ -216,9 +216,4 @@ public final class EmptyBuf implements InputBuf {
 	public InputBuf skipAllBytes() {
 		return this;
 	}
-
-	@Override
-	public ByteBuffer unsafeOriginal() {
-		throw new UnsupportedOperationException();
-	}
 }

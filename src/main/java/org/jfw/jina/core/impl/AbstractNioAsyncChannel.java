@@ -44,7 +44,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 	public void doRegister() throws ClosedChannelException {
 		assert this.javaChannel != null;
-		this.javaChannel.register(this.executor.unwrappedSelector(), SelectionKey.OP_READ, this);
+		this.key = this.javaChannel.register(this.executor.unwrappedSelector(), SelectionKey.OP_READ, this);
 		this.afterRegister();
 	}
 
@@ -169,7 +169,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 					this.setOpWrite();
 				} else {
 					buf.release();
-					NioAsyncExecutor.safeInvokeCompleted(task,(AsyncExecutor)executor);
+					NioAsyncExecutor.safeInvokeCompleted(task, (AsyncExecutor) executor);
 					return;
 				}
 			}
@@ -226,7 +226,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			}
 			outputCache.unsafeShift();
 			if (task != null) {
-				NioAsyncExecutor.safeInvokeCompleted(task, (AsyncExecutor)executor);
+				NioAsyncExecutor.safeInvokeCompleted(task, (AsyncExecutor) executor);
 			}
 		}
 		this.cleanOpWrite();

@@ -14,7 +14,6 @@ import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
-import java.security.Provider;
 import java.security.Security;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
@@ -34,18 +33,13 @@ import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
-import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSessionContext;
-import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 
-import org.jfw.jina.buffer.BufAllocator;
-import org.jfw.jina.ssl.ApplicationProtocolConfig.Protocol;
-import org.jfw.jina.ssl.ApplicationProtocolConfig.SelectedListenerFailureBehavior;
-import org.jfw.jina.ssl.ApplicationProtocolConfig.SelectorFailureBehavior;
+import org.jfw.jina.ssl.engine.JdkSslEngine;
 import org.jfw.jina.util.ArrayUtil;
 
 public abstract class SslContext {
@@ -96,12 +90,6 @@ public abstract class SslContext {
 
 	
 
-	/**
-	 * Creates a new instance (startTls set to {@code false}).
-	 */
-	protected SslContext() {
-		this(false);
-	}
 
 	/**
 	 * Creates a new instance.
@@ -147,7 +135,7 @@ public abstract class SslContext {
 	 * 
 	 * @return a new {@link SSLEngine}
 	 */
-	public abstract SSLEngine newEngine();
+	public abstract JdkSslEngine newEngine();
 
 	/**
 	 * Creates a new {@link SSLEngine} using advisory peer information.
@@ -164,74 +152,14 @@ public abstract class SslContext {
 	 *
 	 * @return a new {@link SSLEngine}
 	 */
-	public abstract SSLEngine newEngine(String peerHost, int peerPort);
+	public abstract JdkSslEngine newEngine(String peerHost, int peerPort);
 
 	/**
 	 * Returns the {@link SSLSessionContext} object held by this context.
 	 */
 	public abstract SSLSessionContext sessionContext();
 
-	/**
-	 * Create a new SslHandler.
-	 * 
-	 * @see #newHandler(ByteBufAllocator)
-	 */
-	protected SslHandler newHandler( boolean startTls) {
-		return new SslHandler(newEngine(), startTls);
-	}
 
-	/**
-	 * Creates a new {@link SslHandler} with advisory peer information.
-	 * <p>
-	 * If {@link SslProvider#OPENSSL_REFCNT} is used then the returned
-	 * {@link SslHandler} will release the engine that is wrapped. If the
-	 * returned {@link SslHandler} is not inserted into a pipeline then you may
-	 * leak native memory!
-	 * <p>
-	 * <b>Beware</b>: the underlying generated {@link SSLEngine} won't have
-	 * <a href="https://wiki.openssl.org/index.php/Hostname_validation">hostname
-	 * verification</a> enabled by default. If you create {@link SslHandler} for
-	 * the client side and want proper security, we advice that you configure
-	 * the {@link SSLEngine} (see
-	 * {@link javax.net.ssl.SSLParameters#setEndpointIdentificationAlgorithm(String)}
-	 * ):
-	 * 
-	 * <pre>
-	 * SSLEngine sslEngine = sslHandler.engine();
-	 * SSLParameters sslParameters = sslEngine.getSSLParameters();
-	 * // only available since Java 7
-	 * sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-	 * sslEngine.setSSLParameters(sslParameters);
-	 * </pre>
-	 * <p>
-	 * The underlying {@link SSLEngine} may not follow the restrictions imposed
-	 * by the <a href=
-	 * "https://docs.oracle.com/javase/7/docs/api/javax/net/ssl/SSLEngine.html">
-	 * SSLEngine javadocs</a> which limits wrap/unwrap to operate on a single
-	 * SSL/TLS packet.
-	 * 
-	 * @param alloc
-	 *            If supported by the SSLEngine then the SSLEngine will use this
-	 *            to allocate ByteBuf objects.
-	 * @param peerHost
-	 *            the non-authoritative name of the host
-	 * @param peerPort
-	 *            the non-authoritative port
-	 *
-	 * @return a new {@link SslHandler}
-	 */
-	public final SslHandler newHandler(String peerHost, int peerPort) {
-		return newHandler(peerHost, peerPort, startTls);
-	}
-
-	/**
-	 * Create a new SslHandler.
-	 * 
-	 * @see #newHandler(ByteBufAllocator, String, int, boolean)
-	 */
-	protected SslHandler newHandler(String peerHost, int peerPort, boolean startTls) {
-		return new SslHandler(newEngine(peerHost, peerPort), startTls);
-	}
 
 	/**
 	 * Generates a key specification for an (encrypted) private key.
@@ -468,21 +396,4 @@ public abstract class SslContext {
             }
         }
     }
-	public enum ClientAuth {
-	    /**
-	     * Indicates that the {@link javax.net.ssl.SSLEngine} will not request client authentication.
-	     */
-	    NONE,
-
-	    /**
-	     * Indicates that the {@link javax.net.ssl.SSLEngine} will request client authentication.
-	     */
-	    OPTIONAL,
-
-	    /**
-	     * Indicates that the {@link javax.net.ssl.SSLEngine} will *require* client authentication.
-	     */
-	    REQUIRE
-	}
-
 }

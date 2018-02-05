@@ -1,5 +1,6 @@
 package org.jfw.jina.http2;
 
+import java.nio.ByteBuffer;
 import java.nio.channels.spi.SelectorProvider;
 
 import org.jfw.jina.core.AsyncExecutorGroup;
@@ -24,4 +25,7 @@ public class Http2AsyncExecutor extends HttpAsyncExecutor {
 	
 	
 	public final DefaultHttpHeaders shareHeaders = new DefaultHttpHeaders();
+	
+	public final ByteBuffer deCryptBuffer = ByteBuffer.allocate(8192);
+	public final byte[] deCryptByteArray = new byte[4096];
 }

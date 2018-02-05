@@ -213,4 +213,9 @@ class HeadOutputBuf implements OutputBuf {
 		assert next != null && ((DirectOutputBuf) next).alloc.executor().inLoop();
 		return this.writerIndex;
 	}
+
+	@Override
+	public ByteBuffer original() {
+		return buffer;
+	}
 }

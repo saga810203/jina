@@ -1,22 +1,18 @@
 package org.jfw.jina.ssl;
 
-import java.io.File;
 import java.security.PrivateKey;
-import java.security.Provider;
 import java.security.cert.X509Certificate;
 
-import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSessionContext;
-import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 
 public class JdkSslServerContext extends JdkSslContext {
 	JdkSslServerContext(X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain, PrivateKey key,
 			String keyPassword, KeyManagerFactory keyManagerFactory, Iterable<String> ciphers, CipherSuiteFilter cipherFilter, long sessionCacheSize,
-			long sessionTimeout, ClientAuth clientAuth, String[] protocols, boolean startTls,String[] appcationProtocols) throws SSLException {
+			long sessionTimeout, String[] protocols, boolean startTls,String[] appcationProtocols) throws SSLException {
 		super(newSSLContext(trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, sessionCacheSize,
 				sessionTimeout), false, ciphers, cipherFilter,protocols, startTls,appcationProtocols);
 	}

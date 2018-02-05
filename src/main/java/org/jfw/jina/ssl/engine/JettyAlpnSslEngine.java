@@ -11,11 +11,11 @@ import org.jfw.jina.ssl.SslUtil;
 
 public class JettyAlpnSslEngine extends JdkSslEngine {
 
-	public static JettyAlpnSslEngine newClientEngine(SSLEngine engine, String[] protocols) {
+	public static JdkSslEngine newClientEngine(SSLEngine engine, String[] protocols) {
 		return new ClientEngine(engine, protocols);
 	}
 
-	public static JettyAlpnSslEngine newServerEngine(SSLEngine engine, String[] protocols) {
+	public static JdkSslEngine newServerEngine(SSLEngine engine, String[] protocols) {
 		return new ServerEngine(engine, protocols);
 	}
 

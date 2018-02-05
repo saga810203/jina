@@ -11,9 +11,6 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.TrustManagerFactory;
 
-import org.jfw.jina.ssl.SslContext.ClientAuth;
-
-
 
 
 public class SslContextBuilder {
@@ -81,7 +78,6 @@ public class SslContextBuilder {
     private CipherSuiteFilter cipherFilter =CipherSuiteFilter.DEFAULT;
     private long sessionCacheSize;
     private long sessionTimeout;
-    private ClientAuth clientAuth = ClientAuth.NONE;
     private String[] protocols;
     private String[] applicationProtocols;
     private boolean startTls;
@@ -256,13 +252,7 @@ public class SslContextBuilder {
         return this;
     }
 
-    /**
-     * Sets the client authentication mode.
-     */
-    public SslContextBuilder clientAuth(ClientAuth clientAuth) {
-        this.clientAuth =clientAuth==null?ClientAuth.NONE:clientAuth; 
-        return this;
-    }
+
 
     /**
      * The TLS protocol versions to enable.
@@ -296,7 +286,7 @@ public class SslContextBuilder {
     public SslContext build() throws SSLException {
         if (forServer) {
         	return new JdkSslServerContext(trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory,
-					ciphers, cipherFilter,sessionCacheSize, sessionTimeout, clientAuth, protocols, startTls,applicationProtocols);
+					ciphers, cipherFilter,sessionCacheSize, sessionTimeout, protocols, startTls,applicationProtocols);
         } else {
         	return new JdkSslClientContext( trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, ciphers,
 					cipherFilter,protocols, sessionCacheSize, sessionTimeout,applicationProtocols);

@@ -1,6 +1,7 @@
 package org.jfw.jina.buffer;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.ScatteringByteChannel;
 
@@ -239,4 +240,5 @@ public interface OutputBuf {
 	void release();
 	InputBuf input();
 	long size();
+	ByteBuffer original();
 }

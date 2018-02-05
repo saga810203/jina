@@ -26,7 +26,7 @@ import org.jfw.jina.util.StringUtil;
 import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.TagQueue.TagNode;
 
-public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> implements KeepAliveCheck {
+public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncChannel<T> implements KeepAliveCheck {
 
 	private static final int HTTP_STATE_SKIP_CONTROL_CHARS = 10;
 	private static final int HTTP_STATE_READ_INITIAL = 20;
@@ -50,7 +50,7 @@ public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> impl
 
 	protected HttpService service = new HttpService();
 
-	public HttpChannel(HttpAsyncExecutor executor, SocketChannel javaChannel) {
+	public HttpChannel(T executor, SocketChannel javaChannel) {
 		super(executor, javaChannel);
 		this.inputCache = executor.newTagQueue();
 	}
@@ -61,7 +61,7 @@ public class HttpChannel extends AbstractNioAsyncChannel<HttpAsyncExecutor> impl
 		this.addKeepAliveCheck();
 	}
 
-	public HttpChannel(AbstractNioAsyncChannel<? extends HttpAsyncExecutor> channel) {
+	public HttpChannel(AbstractNioAsyncChannel<? extends T> channel) {
 		super(channel);
 		this.inputCache = executor.newTagQueue();
 	}
