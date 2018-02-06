@@ -218,4 +218,9 @@ class HeadOutputBuf implements OutputBuf {
 	public ByteBuffer original() {
 		return buffer;
 	}
+
+	@Override
+	public void unsafeWriteIndex(int idx) {
+		throw new UnsupportedOperationException();		
+	}
 }

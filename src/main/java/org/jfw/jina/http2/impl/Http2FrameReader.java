@@ -1,10 +1,12 @@
 package org.jfw.jina.http2.impl;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.core.NioAsyncChannel;
+import org.jfw.jina.core.impl.AbstractNioAsyncChannel;
 import org.jfw.jina.http.KeepAliveCheck;
 import org.jfw.jina.http.impl.DefaultHttpHeaders;
 import org.jfw.jina.http2.FrameWriter;
@@ -21,7 +23,7 @@ import org.jfw.jina.util.DQueue.DNode;
 import org.jfw.jina.util.Queue;
 import org.jfw.jina.util.StringUtil;
 
-public abstract class Http2FrameReader implements Http2Connection, FrameWriter, KeepAliveCheck, NioAsyncChannel {
+public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends AbstractNioAsyncChannel<T> implements Http2Connection, FrameWriter, KeepAliveCheck {
 	public static final long INVALID_STREAM_ID = Long.MIN_VALUE;
 
 	public static final int FRAME_CONFIG_HEADER_SIZE = 9;
@@ -77,38 +79,31 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 
 	 HpackDynamicTable remoteDynaTable = new HpackDynamicTable(4096);
 
-	 final Http2AsyncExecutor executor;
-	 final SocketChannel javaChannel;
-	 final SelectionKey key;
 
-	 final byte[] frameReadBuffer = new byte[64];
+
+	 final byte[] frameReadBuffer;
 	 int frameHeaderIndex = 0;
 
 	 int payloadLength = 0;
 	 byte frameType = 0;
 	 byte frameFlag = 0;
 	 int streamId = 0;
-
-	 Queue<InputBuf> framePayload;
 	 int payloadIndex = 0;
+	 ByteArrayOutputStream cachePayload;
 
-	 Queue<InputBuf> headersPayload;
-	 Queue<InputBuf> dataPayload;
 	// protected boolean headerProcessing = false;
 	 long streamIdOfHeaders = INVALID_STREAM_ID;
 
 	 byte currentState = FRAME_STATE_READ_HEADER;
 
 	 boolean goAwayed = false;
+	 
+	 
 
-	protected Http2FrameReader(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key) {
-		this.executor = executor;
-		this.javaChannel = javaChannel;
-		this.key = key;
-		this.framePayload = executor.newQueue();
-		this.headersPayload = executor.newQueue();
-		this.dataPayload = executor.newQueue();
-		key.attach(this);
+	protected Http2FrameReader(T executor, SocketChannel javaChannel) {
+		super(executor,javaChannel);
+		this.cachePayload =new ByteArrayOutputStream();
+		this.frameReadBuffer = new byte[64];
 	}
 
 	protected abstract void handleInputClose();
@@ -120,18 +115,21 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 
 	protected boolean fixLenPayload = false;
 
-	protected void handleRead(InputBuf buf, int len) {
+	protected void handleRead(int len) {
 		this.removeKeepAliveCheck();
 		if (len > 0) {
-			while (buf.readable()) {
+			
+			while (this.widx> this.ridx) {
 				if (this.currentState == FRAME_STATE_READ_HEADER) {
-					if (!doReadFrameHeader(buf)) {
+					if (!doReadFrameHeader()) {
 						this.addKeepAliveCheck();
+						this.compactReadBuffer();
 						return;
 					}
 				}
 				if (this.currentState == FRAME_STATE_READ_DATA) {
-					if (!doReadFramePayLoad(buf)) {
+					if (!doReadFramePayLoad()) {
+						this.compactReadBuffer();
 						this.addKeepAliveCheck();
 						return;
 					}
@@ -146,25 +144,18 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 		}
 	}
 
-	private boolean doReadFramePayLoad(InputBuf buf) {
-		int nr = buf.readableBytes();
+	private boolean doReadFramePayLoad() {
+		int nr = this.widx - this.ridx;
 		int readSize = Integer.min(this.payloadLength - this.payloadIndex, nr);
+		
 		if (readSize > 0) {
+			
 			if (nr > readSize) {
-				if (fixLenPayload) {
-					buf.readBytes(this.frameReadBuffer, this.payloadIndex, readSize);
-				} else {
-					this.framePayload.offer(buf.duplicate(readSize));
-					buf.skipBytes(readSize);
-				}
+				this.cachePayload.write(this.rBytes, this.ridx,readSize);
 			} else {
-				if (fixLenPayload) {
-					buf.readBytes(this.frameReadBuffer, this.payloadIndex, readSize);
-				} else {
-					this.framePayload.offer(buf.slice());
-					buf.skipAllBytes();
-				}
+				this.cachePayload.write(this.rBytes, this.ridx,readSize);
 			}
+			this.ridx+=readSize;
 			this.payloadIndex += readSize;
 		}
 		if (this.payloadIndex == this.payloadLength) {
@@ -181,7 +172,7 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 			} else if (frameType == FRAME_TYPE_SETTINGS) {
 				handleSettingsFrame();
 			} else if (frameType == FRAME_TYPE_PUSH_PROMISE) {
-				this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+			//	this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 			} else if (frameType == FRAME_TYPE_PING) {
 				handlePingFrame();
 			} else if (frameType == FRAME_TYPE_GO_AWAY) {
@@ -193,7 +184,6 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 			} else {
 				handleUnknownFrame();
 			}
-
 			return true;
 		} else {
 			return false;
@@ -201,6 +191,8 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 	}
 
 	private void handleGoAwayFrame() {
+		cachePayload.
+		
 		this.readCacheBytesInQueue(this.framePayload, 8);
 
 		int lastStreamId = ((frameReadBuffer[0] & 0x7f) << 24 | (frameReadBuffer[1] & 0xff) << 16 | (frameReadBuffer[2] & 0xff) << 8
@@ -438,10 +430,11 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 		}
 	}
 
-	private boolean doReadFrameHeader(InputBuf buf) {
-		int nr = buf.readableBytes();
+	private boolean doReadFrameHeader() {
+		int nr =this.widx- this.ridx;
 		int readSize = Integer.min(FRAME_CONFIG_HEADER_SIZE - this.frameHeaderIndex, nr);
-		buf.readBytes(this.frameReadBuffer, this.frameHeaderIndex, readSize);
+		System.arraycopy(this.rBytes, ridx,this.frameReadBuffer, this.frameHeaderIndex,readSize);
+		this.ridx+=readSize;
 		this.frameHeaderIndex += readSize;
 		if (this.frameHeaderIndex == FRAME_CONFIG_HEADER_SIZE) {
 			this.frameHeaderIndex = 0;
@@ -493,8 +486,8 @@ public abstract class Http2FrameReader implements Http2Connection, FrameWriter, 
 
 			return true;
 		}
+		this.clearReadBuffer();
 		return false;
-
 	}
 
 	private void verifyUnknownFrame() {

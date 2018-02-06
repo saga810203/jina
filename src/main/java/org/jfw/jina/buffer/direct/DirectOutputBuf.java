@@ -249,4 +249,8 @@ class DirectOutputBuf implements OutputBuf {
 	public ByteBuffer original() {
 		return buffer;
 	}
+	@Override
+	public void unsafeWriteIndex(int idx) {
+		this.writerIndex = idx;
+	}
 }

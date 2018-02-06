@@ -452,4 +452,11 @@ public final class HttpConsts {
 	public static final char[] PUT_CHAR_ARRAY = new char[] { 'P', 'U', 'T' };
 	public static final char[] DELETE_CHAR_ARRAY = new char[] { 'D', 'E', 'L', 'E', 'T', 'E' };
 	public static final char[] HTTP11 = new char[] { 'H', 'T', 'T', 'P', '/', '1', '.', '1' };
+	public static final byte[] GET_BYTE_ARRAY = new byte[] { 'G', 'E', 'T' };
+	public static final byte[] POST_BYTE_ARRAY = new byte[] { 'P', 'O', 'S', 'T' };
+	public static final byte[] PUT_BYTE_ARRAY = new byte[] { 'P', 'U', 'T' };
+	public static final byte[] DELETE_BYTE_ARRAY = new byte[] { 'D', 'E', 'L', 'E', 'T', 'E' };
+	public static final byte[] HTTP11_BYTE_ARRAY = new byte[] { 'H', 'T', 'T', 'P', '/', '1', '.', '1' };
+	
+	public static final byte[] COLON_ARRAY = new byte[]{(byte)':'};
 }

@@ -1,13 +1,11 @@
 package org.jfw.jina.core.impl;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
-import org.jfw.jina.buffer.EmptyBuf;
-import org.jfw.jina.buffer.InputBuf;
-import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.core.TaskCompletionHandler;
@@ -16,12 +14,19 @@ import org.jfw.jina.util.TagQueue.TagNode;
 import org.jfw.jina.util.TagQueue.TagQueueHandler;
 
 public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implements NioAsyncChannel {
+	public static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
+
 	protected T executor;
 	protected SocketChannel javaChannel;
 	protected SelectionKey key;
-	// protected final TagQueue inputCache;
-	protected final TagQueue<InputBuf, TaskCompletionHandler> outputCache;
+	protected final TagQueue<ByteBuffer, TaskCompletionHandler> outputCache;
+	protected ByteBuffer cacheBuffer;
 	protected Throwable writeException;
+	protected int ridx;
+	protected int widx;
+	protected ByteBuffer rbuffer;
+	protected byte[] rBytes;
+	protected int rlen;
 
 	protected AbstractNioAsyncChannel(AbstractNioAsyncChannel<? extends T> channel) {
 		assert channel.executor.inLoop();
@@ -29,17 +34,22 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.executor = channel.executor;
 		this.key = channel.key;
 		this.key.attach(this);
-		// this.inputCache = channel.inputCache;
 		this.outputCache = channel.outputCache;
-		this.afterRegister();
+		this.ridx = channel.ridx;
+		this.widx = channel.widx;
+		this.rbuffer = channel.rbuffer;
+		this.rBytes = channel.rBytes;
+		this.rlen = channel.rlen;
 	}
 
 	protected AbstractNioAsyncChannel(T executor, SocketChannel javaChannel) {
 		assert executor.inLoop();
-		// this.inputCache = executor.newTagQueue();
 		this.outputCache = executor.newTagQueue();
 		this.executor = executor;
 		this.javaChannel = javaChannel;
+		this.rbuffer = ByteBuffer.allocate(8192);
+		this.rBytes = rbuffer.array();
+		this.rlen = this.rBytes.length;
 	}
 
 	public void doRegister() throws ClosedChannelException {
@@ -78,38 +88,67 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.outputCache.clear(this.WRITE_ERROR_HANDLER);
 	}
 
-	protected abstract void handleRead(InputBuf buf, int len);
+	protected abstract void handleRead(int len);
+
+	protected void compactReadBuffer() {
+		if (this.ridx > 0) {
+			if (ridx == this.widx) {
+				this.rbuffer.clear();
+				this.ridx = this.widx = 0;
+			} else {
+				this.widx -= this.ridx;
+				System.arraycopy(this.rbuffer, this.ridx, this.rbuffer, 0, this.widx);
+				this.ridx = 0;
+				this.rbuffer.clear().position(this.widx);
+			}
+		}
+	}
+
+	protected void clearReadBuffer() {
+		this.ridx = this.widx = 0;
+		this.rbuffer.clear();
+	}
 
 	@Override
-	public final void read() {
+	public void read() {
 		int rc = 0;
-		for (;;) {
-			OutputBuf buf = executor.allocBuffer();
-			try {
-				rc = buf.writeBytes(this.javaChannel);
-				if (rc > 0) {
-					InputBuf ibuf = buf.input();
-					this.handleRead(ibuf, rc);
-					ibuf.release();
-				} else if (rc < 0) {
-					this.handleRead(EmptyBuf.INSTANCE, -1);
-					this.cleanOpRead();
-					return;
-				} else {
-					return;
-				}
-			} catch (ClosedChannelException e) {
-				handleRead(EmptyBuf.INSTANCE, -1);
-				this.cleanOpRead();
-				return;
-			} catch (IOException e) {
-				handleRead(EmptyBuf.INSTANCE, -1);
-				this.cleanOpRead();
-				this.hanldReadException(e);
-				return;
-			} finally {
-				buf.release();
+		try {
+			rc = this.javaChannel.read(this.rbuffer);
+		} catch (ClosedChannelException e) {
+			int len = this.widx - this.ridx;
+			if (len > 0) {
+				this.handleRead(len);
 			}
+			handleRead(-1);
+			this.cleanOpRead();
+			return;
+		} catch (IOException e) {
+			int len = this.widx - this.ridx;
+			if (len > 0) {
+				this.handleRead(len);
+			}
+			handleRead(-1);
+			this.cleanOpRead();
+			this.hanldReadException(e);
+			return;
+		}
+		if (rc == 0) {
+			int len = this.widx - this.ridx;
+			if (len > 0) {
+				this.handleRead(len);
+			}
+			return;
+		} else if (rc > 0) {
+			this.widx += rc;
+			this.handleRead(this.widx - this.ridx);
+			return;
+
+		} else {
+			int len = this.widx - this.ridx;
+			if (len > 0) {
+				this.handleRead(len);
+			}
+			this.handleRead(-1);
 		}
 	}
 
@@ -152,56 +191,123 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		}
 	}
 
-	protected void write(InputBuf buf, TaskCompletionHandler task) {
+	protected void writeData(byte[] buf, int index, int len) {
 		assert buf != null;
-		assert task != null;
+		assert index >= 0;
+		assert len > 0;
+		assert buf.length >= (index + len);
 		if (this.javaChannel != null) {
-			if (outputCache.isEmpty()) {
-				try {
-					buf.readBytes(this.javaChannel);
-				} catch (IOException e) {
-					this.writeException = e;
-					this.close();
-					NioAsyncExecutor.safeInvokeFailed(task, e, executor);
-					return;
-				}
-				if (buf.readable()) {
-					this.setOpWrite();
-				} else {
-					buf.release();
-					NioAsyncExecutor.safeInvokeCompleted(task, (AsyncExecutor) executor);
-					return;
+			if (null == this.cacheBuffer) {
+				this.cacheBuffer = ByteBuffer.allocate(8192);
+			} else {
+				if (!cacheBuffer.hasRemaining()) {
+					cacheBuffer.flip();
+					this.outputCache.offer(cacheBuffer);
+					cacheBuffer = ByteBuffer.allocate(8192);
 				}
 			}
-			outputCache.offer(buf, task);
-		} else {
-			if (task != null)
-				task.failed(this.writeException, executor);
-			if (buf != null)
-				buf.release();
+			while (len > 0) {
+				int wl = Integer.min(cacheBuffer.remaining(), len);
+				len -= wl;
+				if (len > 0) {
+					cacheBuffer.flip();
+					outputCache.offer(cacheBuffer);
+					cacheBuffer = ByteBuffer.allocate(8192);
+				}
+			}
+		}
+	}
+//	
+//	protected void writeData(byte[] buf, int index, int len,TaskCompletionHandler task) {
+//		assert buf != null;
+//		assert index >= 0;
+//		assert len > 0;
+//		assert buf.length >= (index + len);
+//		if (this.javaChannel != null) {
+//			if (null == this.cacheBuffer) {
+//				this.cacheBuffer = ByteBuffer.allocate(8192);
+//			} else {
+//				if (!cacheBuffer.hasRemaining()) {
+//					cacheBuffer.flip();
+//					this.outputCache.offer(cacheBuffer);
+//					cacheBuffer = ByteBuffer.allocate(8192);
+//				}
+//			}
+//			while (len > 0) {
+//				int wl = Integer.min(cacheBuffer.remaining(), len);
+//				len -= wl;
+//				if (len > 0) {
+//					cacheBuffer.flip();
+//					outputCache.offer(cacheBuffer);
+//					cacheBuffer = ByteBuffer.allocate(8192);
+//				}
+//			}
+//			this.cacheBuffer.flip();
+//			this.outputCache.offer(cacheBuffer,task);
+//			this.cacheBuffer = null;
+//			this.setOpWrite();
+//		}
+//	}
+
+	protected void writeByteData(byte value) {
+		if (this.javaChannel != null) {
+			if (null == this.cacheBuffer) {
+				this.cacheBuffer = ByteBuffer.allocate(8192);
+			} else {
+				if (!cacheBuffer.hasRemaining()) {
+					cacheBuffer.flip();
+					this.outputCache.offer(cacheBuffer);
+					cacheBuffer = ByteBuffer.allocate(8192);
+				}
+			}
+			this.cacheBuffer.put(value);
 		}
 	}
 
-	protected void write(InputBuf buf) {
+	protected void flushData(byte[] buf, int index, int len, TaskCompletionHandler task) {
 		assert buf != null;
-		assert buf.readable();
+		assert index >= 0;
+		assert len > 0;
+		assert buf.length >= (index + len);
 		if (this.javaChannel != null) {
-			if (this.outputCache.isEmpty()) {
-				try {
-					buf.readBytes(this.javaChannel);
-				} catch (IOException e) {
-					this.writeException = e;
-					this.close();
-					return;
-				}
-				if (buf.readable()) {
-					this.setOpWrite();
-				} else {
-					buf.release();
-					return;
+			if (null == this.cacheBuffer) {
+				this.cacheBuffer = ByteBuffer.allocate(8192);
+			} else {
+				if (!cacheBuffer.hasRemaining()) {
+					cacheBuffer.flip();
+					this.outputCache.offer(cacheBuffer);
+					cacheBuffer = ByteBuffer.allocate(8192);
 				}
 			}
-			outputCache.offer(buf, null);
+			while (len > 0) {
+				int wl = Integer.min(cacheBuffer.remaining(), len);
+				len -= wl;
+				if (len > 0) {
+					cacheBuffer.flip();
+					outputCache.offer(cacheBuffer);
+					cacheBuffer = ByteBuffer.allocate(8192);
+				}
+			}
+			this.cacheBuffer.flip();
+			this.outputCache.offer(this.cacheBuffer, task);
+			this.cacheBuffer = null;
+			this.setOpWrite();
+		} else {
+			task.failed(this.writeException, executor);
+		}
+	}
+
+	protected void flushData(TaskCompletionHandler task) {
+		assert task != null;
+		if (this.javaChannel != null) {
+			if (null == this.cacheBuffer) {
+				this.outputCache.offer(EMPTY_BUFFER, task);
+			} else {
+				this.cacheBuffer.flip();
+				this.outputCache.offer(this.cacheBuffer, task);
+				this.cacheBuffer = null;
+			}
+			this.setOpWrite();
 		}
 	}
 
@@ -210,17 +316,17 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		TagNode tagNode = null;
 		outputCache.peekTagNode();
 		while ((tagNode = outputCache.peekTagNode()) != null) {
-			InputBuf buf = (InputBuf) tagNode.item();
+			ByteBuffer buf = tagNode.item();
 			TaskCompletionHandler task = (TaskCompletionHandler) tagNode.tag();
-			if (buf.readable()) {
+			if (buf.hasRemaining()) {
 				try {
-					buf.readBytes(this.javaChannel);
+					this.javaChannel.write(buf);
 				} catch (IOException e) {
 					this.writeException = e;
 					this.close();
 					return;
 				}
-				if (buf.readable()) {
+				if (buf.hasRemaining()) {
 					return;
 				}
 			}
@@ -238,216 +344,223 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.key = key;
 	}
 
-	protected OutputBuf writeBoolean(OutputBuf buf, boolean value) {
-		if (!buf.writable(1)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeBoolean(value);
-		return buf;
-	}
+	// private void ensureOutCapacity(int size){
+	// if(this.cacheBuffer==null){
+	// this.cacheBuffer = ByteBuffer.allocate(8192);
+	// }else{
+	// if(this.cacheBuffer.remaining()<size){
+	// this.cacheBuffer.flip();
+	// off
+	// }
+	// }
+	// }
+	//
+	// protected void writeBoolean(boolean value) {
+	// if(this.)
+	//
+	// if (!buf.writable(1)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeBoolean(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeByte(OutputBuf buf, int value) {
+	// if (!buf.writable(1)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeByte(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeShort(OutputBuf buf, int value) {
+	// if (!buf.writable(2)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeShort(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeShortLE(OutputBuf buf, int value) {
+	// if (!buf.writable(2)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeShortLE(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeMedium(OutputBuf buf, int value) {
+	// if (!buf.writable(3)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeMedium(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeMediumLE(OutputBuf buf, int value) {
+	// if (!buf.writable(3)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeMediumLE(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeInt(OutputBuf buf, int value) {
+	// if (!buf.writable(4)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeInt(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeIntLE(OutputBuf buf, int value) {
+	// if (!buf.writable(4)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeIntLE(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeLong(OutputBuf buf, long value) {
+	// if (!buf.writable(8)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeLong(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeLongLE(OutputBuf buf, long value) {
+	// if (!buf.writable(8)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeLongLE(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeChar(OutputBuf buf, int value) {
+	// if (!buf.writable(2)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeChar(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeFloat(OutputBuf buf, float value) {
+	// if (!buf.writable(4)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeFloat(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeFloatLE(OutputBuf buf, float value) {
+	// if (!buf.writable(4)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeFloatLE(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeDouble(OutputBuf buf, double value) {
+	// if (!buf.writable(8)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeDouble(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeDoubleLE(OutputBuf buf, double value) {
+	// if (!buf.writable(8)) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// buf.writeDouble(value);
+	// return buf;
+	// }
+	//
+	// protected OutputBuf writeBytes(OutputBuf buf, byte[] src, int srcIndex,
+	// int length) {
+	// if (!buf.writable()) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// while (length > 0) {
+	// int canWriteCount = buf.writableBytes();
+	// if (length > canWriteCount) {
+	// buf.writeBytes(src, srcIndex, canWriteCount);
+	// srcIndex += canWriteCount;
+	// length -= canWriteCount;
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// } else {
+	// buf.writeBytes(src, srcIndex, length);
+	// break;
+	// }
+	// }
+	// return buf;
+	// }
 
-	protected OutputBuf writeByte(OutputBuf buf, int value) {
-		if (!buf.writable(1)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeByte(value);
-		return buf;
-	}
+	// protected OutputBuf writeAscii(OutputBuf buf, String src) {
+	// byte[]
+	//
+	// if (!buf.writable()) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// int idx = 0;
+	// int len = src.length();
+	// do {
+	// int wlen = Integer.min(buf.writableBytes() + idx, len);
+	// while (idx < wlen) {
+	// buf.writeByte(src.charAt(idx++));
+	// }
+	// if (idx < len) {
+	// this.write(buf.input());
+	// buf.release();
+	// buf = executor.allocBuffer();
+	// }
+	// } while (idx < len);
+	// return buf;
+	// }
 
-	protected OutputBuf writeShort(OutputBuf buf, int value) {
-		if (!buf.writable(2)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeShort(value);
-		return buf;
-	}
-
-	protected OutputBuf writeShortLE(OutputBuf buf, int value) {
-		if (!buf.writable(2)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeShortLE(value);
-		return buf;
-	}
-
-	protected OutputBuf writeMedium(OutputBuf buf, int value) {
-		if (!buf.writable(3)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeMedium(value);
-		return buf;
-	}
-
-	protected OutputBuf writeMediumLE(OutputBuf buf, int value) {
-		if (!buf.writable(3)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeMediumLE(value);
-		return buf;
-	}
-
-	protected OutputBuf writeInt(OutputBuf buf, int value) {
-		if (!buf.writable(4)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeInt(value);
-		return buf;
-	}
-
-	protected OutputBuf writeIntLE(OutputBuf buf, int value) {
-		if (!buf.writable(4)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeIntLE(value);
-		return buf;
-	}
-
-	protected OutputBuf writeLong(OutputBuf buf, long value) {
-		if (!buf.writable(8)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeLong(value);
-		return buf;
-	}
-
-	protected OutputBuf writeLongLE(OutputBuf buf, long value) {
-		if (!buf.writable(8)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeLongLE(value);
-		return buf;
-	}
-
-	protected OutputBuf writeChar(OutputBuf buf, int value) {
-		if (!buf.writable(2)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeChar(value);
-		return buf;
-	}
-
-	protected OutputBuf writeFloat(OutputBuf buf, float value) {
-		if (!buf.writable(4)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeFloat(value);
-		return buf;
-	}
-
-	protected OutputBuf writeFloatLE(OutputBuf buf, float value) {
-		if (!buf.writable(4)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeFloatLE(value);
-		return buf;
-	}
-
-	protected OutputBuf writeDouble(OutputBuf buf, double value) {
-		if (!buf.writable(8)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeDouble(value);
-		return buf;
-	}
-
-	protected OutputBuf writeDoubleLE(OutputBuf buf, double value) {
-		if (!buf.writable(8)) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		buf.writeDouble(value);
-		return buf;
-	}
-
-	protected OutputBuf writeBytes(OutputBuf buf, byte[] src, int srcIndex, int length) {
-		if (!buf.writable()) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		while (length > 0) {
-			int canWriteCount = buf.writableBytes();
-			if (length > canWriteCount) {
-				buf.writeBytes(src, srcIndex, canWriteCount);
-				srcIndex += canWriteCount;
-				length -= canWriteCount;
-				this.write(buf.input());
-				buf.release();
-				buf = executor.allocBuffer();
-			} else {
-				buf.writeBytes(src, srcIndex, length);
-				break;
-			}
-		}
-		return buf;
-	}
-
-	protected OutputBuf writeAscii(OutputBuf buf, String src) {
-		if (!buf.writable()) {
-			this.write(buf.input());
-			buf.release();
-			buf = executor.allocBuffer();
-		}
-		int idx = 0;
-		int len = src.length();
-		do {
-			int wlen = Integer.min(buf.writableBytes() + idx, len);
-			while (idx < wlen) {
-				buf.writeByte(src.charAt(idx++));
-			}
-			if (idx < len) {
-				this.write(buf.input());
-				buf.release();
-				buf = executor.allocBuffer();
-			}
-		} while (idx < len);
-		return buf;
-	}
-
-	protected final TagQueueHandler<InputBuf, TaskCompletionHandler> WRITE_ERROR_HANDLER = new TagQueueHandler<InputBuf, TaskCompletionHandler>() {
+	protected final TagQueueHandler<ByteBuffer, TaskCompletionHandler> WRITE_ERROR_HANDLER = new TagQueueHandler<ByteBuffer, TaskCompletionHandler>() {
 		@Override
-		public void process(InputBuf item, TaskCompletionHandler tag) {
-			((InputBuf) item).release();
+		public void process(ByteBuffer item, TaskCompletionHandler tag) {
 			if (tag != null) {
 				((TaskCompletionHandler) tag).failed(writeException, executor);
 			}
 		}
 	};
-	// protected final TagQueueMatcher WRITE_HANDLER = new TagQueueMatcher(){
-	// @Override
-	// public boolean match(Object item, Object tag) {
-	//
-	// }
-	//
-	// };
-
 }

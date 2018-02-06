@@ -18,7 +18,7 @@ public interface HttpRequest {
 	void abort();
 	public interface RequestExecutor{
 		void setAsyncExecutor(HttpAsyncExecutor executor);
-		void requestBody(HttpRequest request,InputBuf buf);
+		void requestBody(HttpRequest request,byte[] buffer,int index,int length,boolean end);
 		void execute(HttpRequest request,HttpResponse response);
 		void error(HttpRequest request,int code);
 	}

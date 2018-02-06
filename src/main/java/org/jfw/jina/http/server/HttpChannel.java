@@ -4,10 +4,6 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.channels.SocketChannel;
 
-import org.jfw.jina.buffer.ByteProcessor;
-import org.jfw.jina.buffer.EmptyBuf;
-import org.jfw.jina.buffer.InputBuf;
-import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.core.AsyncTaskAdapter;
@@ -23,8 +19,6 @@ import org.jfw.jina.http.server.HttpRequest.HttpMethod;
 import org.jfw.jina.http.server.HttpRequest.RequestExecutor;
 import org.jfw.jina.util.DQueue.DNode;
 import org.jfw.jina.util.StringUtil;
-import org.jfw.jina.util.TagQueue;
-import org.jfw.jina.util.TagQueue.TagNode;
 
 public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncChannel<T> implements KeepAliveCheck {
 
@@ -45,14 +39,13 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 
 	protected HttpServerRequest request = null;
 	protected HttpServerResponse response = null;
-	protected LineParser lineParser = new LineParser(8192);
-	protected TagQueue<InputBuf, Integer> inputCache;
 
 	protected HttpService service = new HttpService();
 
+	int lineEnd;
+
 	public HttpChannel(T executor, SocketChannel javaChannel) {
 		super(executor, javaChannel);
-		this.inputCache = executor.newTagQueue();
 	}
 
 	@Override
@@ -63,7 +56,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 
 	public HttpChannel(AbstractNioAsyncChannel<? extends T> channel) {
 		super(channel);
-		this.inputCache = executor.newTagQueue();
 	}
 
 	public HttpService getService() {
@@ -96,12 +88,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		assert this.currentState == HTTP_STATE_INVOKING;
 		this.contentLength = Long.MAX_VALUE;
 		this.chunkSize = 0;
-		if (inputCache.isEmpty()) {
-			this.currentState = HTTP_STATE_SKIP_CONTROL_CHARS;
-			if (this.addKeepAliveCheck()) {
-				this.setOpRead();
-			}
+		this.currentState = HTTP_STATE_SKIP_CONTROL_CHARS;
+		if (this.widx == this.ridx) {
+			this.clearReadBuffer();
+			this.setOpRead();
 		} else {
+			this.cleanOpRead();
 			// TagNode node = inputCache.peekTagNode();
 			// InputBuf buf = (InputBuf)node.item();
 			// int len = ((Integer)node.tag()).intValue();
@@ -112,117 +104,45 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			// 延迟处理防止调用栈太长，完合遵守HTTP1.1不会出现这种问题
 			executor.submit(handReadDelay);
 		}
+
 	}
 
 	protected final AsyncTask handReadDelay = new AsyncTaskAdapter() {
 		@Override
 		public void execute(AsyncExecutor executor) throws Throwable {
-			handleInputCache();
+			int len = widx - ridx;
+			handleRead(len);
 		}
 	};
 
-	protected boolean handleFixLenthRead(InputBuf buf) {
+	protected boolean handleFixLenthRead() {
 		if (chunkSize == 0) {
+			this.requestBodyRead(0, true);
+			this.compactReadBuffer();
 			this.requestInvoke();
 			return true;
 		}
-		int nr = buf.readableBytes();
-		if (nr == 0)
+		int nr = this.widx - this.ridx;
+		if (nr == 0) {
+			this.clearReadBuffer();
 			return false;
-		if (nr > chunkSize) {
-			InputBuf dbuf = buf.duplicate((int) chunkSize);
-			this.requestBodyRead(dbuf);
-			dbuf.release();
-			buf.skipBytes((int) chunkSize);
+		} else if (nr > chunkSize) {
+			this.requestBodyRead((int) chunkSize, true);
+			this.ridx += chunkSize;
+			this.compactReadBuffer();
+			return true;
+		} else if (chunkSize == nr) {
+			this.requestBodyRead(nr, true);
+			this.clearReadBuffer();
 			this.requestInvoke();
 			return true;
 		} else {
-			InputBuf ibuf = buf.slice();
-			this.requestBodyRead(ibuf);
-			ibuf.release();
-			buf.skipAllBytes();
+			this.requestBodyRead(nr, false);
+			this.clearReadBuffer();
 			chunkSize -= nr;
-			if (chunkSize == 0) {
-				this.requestInvoke();
-				return true;
-			}
 			return false;
 		}
-	}
 
-	protected void handleInputCache() {
-		TagNode input = null;
-		InputBuf buf = null;
-		int len = -1;
-		this.currentState = HTTP_STATE_SKIP_CONTROL_CHARS;
-		while ((input = this.inputCache.peekTagNode()) != null) {
-			buf = (InputBuf) input.item();
-			len = ((Integer) input.tag()).intValue();
-			if (len > 0) {
-				for (;;) {
-					if (currentState == HTTP_STATE_SKIP_CONTROL_CHARS) {
-						if (!this.doSkipControlChars(buf)) {
-							break;
-						}
-					}
-					if (currentState == HTTP_STATE_READ_INITIAL) {
-						if (!this.doReadRequestLine(buf)) {
-							break;
-						}
-					}
-					if (currentState == HTTP_STATE_READ_HEADER) {
-						if (!this.doReadHeaders(buf)) {
-							this.addKeepAliveCheck();
-							break;
-						}
-					}
-					if (currentState == HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT) {
-						if (buf.readable()) {
-							InputBuf ibuf = buf.slice();
-							this.requestBodyRead(ibuf);
-							ibuf.release();
-							buf.skipAllBytes();
-						}
-						break;
-					}
-					if (currentState == HTTP_STATE_READ_FIXED_LENGTH_CONTENT) {
-						if (!this.handleFixLenthRead(buf)) {
-							break;
-						}
-					}
-					if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT
-							|| currentState == HTTP_STATE_READ_CHUNK_DELIMITER || currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
-						if (!this.readInChunked(buf)) {
-							break;
-						}
-					}
-
-					if (currentState == HTTP_STATE_INVOKING) {
-						int unReadSize = buf.readableBytes();
-						if (unReadSize == 0) {
-							buf.release();
-							inputCache.unsafeShift();
-						}
-						return;
-					}
-					if (currentState == HTTP_STATE_IGNORE) {
-						inputCache.clear(RELEASE_INPUT_BUF);
-						return;
-					}
-				}
-				buf.release();
-				inputCache.unsafeShift();
-			} else {
-				this.inputCache.clear(RELEASE_INPUT_BUF);
-				this.handleCloseInput();
-				return;
-			}
-		}
-		if (null != request && request.supended) {
-			this.cleanOpRead();
-		} else if (this.addKeepAliveCheck()) {
-			this.setOpRead();
-		}
 	}
 
 	@Override
@@ -234,11 +154,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			this.keepAliveNode = null;
 		}
 		this.closeJavaChannel();
-		this.inputCache.clear(RELEASE_INPUT_BUF);
-		if (this.response != null && this.response.cacheOutputBuf != null) {
-			this.response.cacheOutputBuf.release();
-			this.response.cacheOutputBuf = null;
-		}
 	}
 
 	@Override
@@ -249,73 +164,103 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	private String hName;
 	private String hValue;
 
-	private void splitHeader(char[] seq, int end) {
+	private void splitHeader(int start) {
 		int nameStart;
 		int nameEnd;
 		int colonEnd;
 		int valueStart;
 		int valueEnd;
 
-		nameStart = StringUtil.findNonWhitespace(seq, 0, end);
-		for (nameEnd = nameStart; nameEnd < end; nameEnd++) {
-			char ch = seq[nameEnd];
+		nameStart = StringUtil.findNonWhitespace(this.rBytes, start, lineEnd);
+		for (nameEnd = nameStart; nameEnd < lineEnd; nameEnd++) {
+			byte ch = rBytes[nameEnd];
 			if (ch == ':' || Character.isWhitespace(ch)) {
 				break;
 			}
 		}
 
-		for (colonEnd = nameEnd; colonEnd < end; colonEnd++) {
-			if (seq[colonEnd] == ':') {
+		for (colonEnd = nameEnd; colonEnd < lineEnd; colonEnd++) {
+			if (rBytes[colonEnd] == ':') {
 				colonEnd++;
 				break;
 			}
 		}
 
-		hName = new String(seq, nameStart, nameEnd - nameStart);
-		valueStart = StringUtil.findNonWhitespace(seq, 0, colonEnd);
-		if (valueStart == end) {
+		hName = new String(this.rBytes, nameStart, nameEnd - nameStart, StringUtil.US_ASCII);
+		valueStart = StringUtil.findNonWhitespace(this.rBytes, colonEnd, lineEnd);
+		if (valueStart == lineEnd) {
 			hValue = StringUtil.EMPTY_STRING;
 		} else {
-			valueEnd = StringUtil.findEndOfString(seq, 0, end);
-			hValue = new String(seq, valueStart, valueEnd - valueStart);
+			valueEnd = StringUtil.findEndOfString(this.rBytes, colonEnd, lineEnd);
+			hValue = new String(this.rBytes, valueStart, valueEnd - valueStart, StringUtil.US_ASCII);
 		}
 	}
 
-	private boolean doReadHeaders(InputBuf buffer) {
-		int lineSize = lineParser.parseLine(buffer);
-		if (lineSize < 0) {
-			return false;
-		} else if (lineSize > 0) {
-			do {
-				if (lineSize >= lineParser.maxLength) {
-					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_HEADER_FIELDS_TOO_LARGE);
-					return true;
+	private int parseLine() {
+		int begin = this.ridx;
+		for (int i = begin; i < this.widx; ++i) {
+			if (this.rBytes[i] == '\n') {
+				lineEnd = i;
+				this.ridx = i + 1;
+				if (this.rBytes[i - 1] == '\r') {
+					lineEnd = i - 1;
 				}
-				char[] seq = lineParser.seq;
-				char firstChar = seq[0];
+				return begin;
+			}
+		}
+		if (this.widx >= this.rlen) {
+			if (this.ridx == 0) {
+				return Integer.MAX_VALUE;
+			} else {
+				this.compactReadBuffer();
+			}
+		}
+		return -1;
+
+	}
+
+	private boolean doReadHeaders() {
+		int start = parseLine();
+		if (start < 0) {
+			if (this.ridx > 0) {
+				this.compactReadBuffer();
+			}
+			return false;
+		} else if (start == Integer.MAX_VALUE) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_HEADER_FIELDS_TOO_LARGE);
+			this.clearReadBuffer();
+			return true;
+		} else if (lineEnd - start > 0) {
+			do {
+				char firstChar = (char) rBytes[start];
 				if (hName != null && (firstChar == ' ' || firstChar == '\t')) {
 					// please do not make one line from below code
 					// as it breaks +XX:OptimizeStringConcat optimization
-					hValue = hValue + ' ' + StringUtil.trim(lineParser.seq, 0, lineSize);
+					hValue = hValue + ' ' + StringUtil.trim(rBytes, start, lineEnd);
 				} else {
 					if (hName != null) {
 						this.request.headers.add(hName, hValue);
 					}
-					splitHeader(seq, lineSize);
+					splitHeader(start);
 				}
 
-				lineSize = lineParser.parseLine(buffer);
-				if (lineSize < 0) {
+				start = parseLine();
+				if (start < 0) {
+					if (this.ridx > 0) {
+						this.compactReadBuffer();
+					}
 					return false;
+				} else if (start == Integer.MAX_VALUE) {
+					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_HEADER_FIELDS_TOO_LARGE);
+					this.clearReadBuffer();
+					return true;
 				}
-			} while (lineSize > 0);
+			} while (lineEnd - start > 0);
 		}
 
-		// Add the last header.
 		if (hName != null) {
 			this.request.headers.add(hName, hValue);
 		}
-		// reset name and value fields
 		hName = null;
 		hValue = null;
 		HttpMethod method = this.request.method;
@@ -344,26 +289,30 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		return true;
 	}
 
-	private boolean readTrailingHeaders(InputBuf buf) {
+	private boolean readTrailingHeaders() {
 		// AppendableCharSequence line = headerParser.parse(buffer);
-		int lineSize = lineParser.parseLine(buf);
-		if (lineSize < 0) {
+		int start = parseLine();
+		if (start < 0) {
 			return false;
-		} else if (lineSize > 0) {
+		} else if (start == Integer.MAX_VALUE) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_FOOTER);
+			this.clearReadBuffer();
+			return true;
+		} else if (lineEnd - start > 0) {
 			do {
-				if (lineSize >= lineParser.maxLength) {
+				// TODO: IGNORE
+				start = parseLine();
+				if (start < 0) {
+					return false;
+				} else if (start == Integer.MAX_VALUE) {
 					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_FOOTER);
+					this.clearReadBuffer();
 					return true;
 				}
-
-				// TODO: IGNORE
-
-				lineSize = lineParser.parseLine(buf);
-				if (lineSize < 0) {
-					return false;
-				}
-			} while (lineSize > 0);
+			} while (lineEnd - start > 0);
 		}
+		this.requestBodyRead(0, true);
+		this.compactReadBuffer();
 		this.requestInvoke();
 		return true;
 	}
@@ -399,152 +348,156 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			this.request = null;
 			this.response = null;
 			this.currentState = HTTP_STATE_IGNORE;
-			OutputBuf buf = executor.allocBuffer();
 			byte[] bs = error.getReason();
-			buf = this.writeAscii(buf, "HTTP/1.1 " + error.getCode() + ' ');
-			buf = this.writeBytes(buf, bs, 0, bs.length);
-			buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
-			buf = this.writeHttpHeader(buf, HttpConsts.CONTENT_LENGTH, Integer.toString(bs.length));
-			buf = this.writeHttpHeader(buf, HttpConsts.CONTENT_TYPE, HttpConsts.TEXT_HTML_UTF8);
-			buf = this.writeHttpHeader(buf, HttpConsts.DATE, executor.dateFormatter.httpDateHeaderValue());
-			buf = this.writeHttpHeader(buf, HttpConsts.CONNECTION, HttpConsts.CLOSE);
-			buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
-			buf = this.writeBytes(buf, bs, 0, bs.length);
-			this.write(buf.input(), closeTask);
-			buf.release();
+			byte[] lbs = ("HTTP/1.1 " + error.getCode() + ' ').getBytes(StringUtil.US_ASCII);
+			this.writeData(lbs, 0, lbs.length);
+			this.writeData(bs, 0, bs.length);
+			this.writeData(HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+			this.writeHttpHeader(HttpConsts.CONTENT_LENGTH, Integer.toString(bs.length));
+			this.writeHttpHeader(HttpConsts.CONTENT_TYPE, HttpConsts.TEXT_HTML_UTF8);
+			this.writeHttpHeader(HttpConsts.DATE, executor.dateFormatter.httpDateHeaderValue());
+			this.writeHttpHeader(HttpConsts.CONNECTION, HttpConsts.CLOSE);
+			this.writeData(HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+			this.flushData(bs, 0, bs.length, closeTask);
 		}
 	}
 
-	protected OutputBuf writeHttpHeader(OutputBuf buf, String name, String value) {
+	protected void writeHttpHeader(String name, String value) {
 		int sBegin = 0;
 		int sEnd = value.length();
 		int lineIdx = name.length();
-		buf = this.writeAscii(buf, name);
-		buf = this.writeByte(buf, ':');
+
+		byte[] bs = name.getBytes(StringUtil.US_ASCII);
+		this.writeData(bs, 0, bs.length);
+		this.writeByteData((byte) ':');
 		if (lineIdx + sEnd <= 1022) {
-			buf = this.writeAscii(buf, value);
-			buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+			bs = value.getBytes(StringUtil.US_ASCII);
+			this.writeData(bs, 0, bs.length);
+			this.writeData(HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
 		} else {
 			int len = 1022 - lineIdx;
 			int nEnd = sBegin + len;
-			buf = this.writeAscii(buf, value.substring(sBegin, nEnd));
-			buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+			bs = value.substring(sBegin, nEnd).getBytes(StringUtil.US_ASCII);
+
+			this.writeData(bs, 0, bs.length);
+			this.writeData(HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
 			do {
 				sBegin = sEnd;
 				nEnd += 1021;
-				buf = this.writeByte(buf, '\t');
-				buf = this.writeAscii(buf, value.substring(sBegin, Integer.min(sEnd, nEnd)));
-				buf = this.writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+				this.writeByteData((byte) '\t');
+				bs = value.substring(sBegin, Integer.min(sEnd, nEnd)).getBytes(StringUtil.US_ASCII);
+				this.writeData(bs, 0, bs.length);
+				this.writeData(HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
 			} while (nEnd < sEnd);
 		}
-		return buf;
 	}
 
-	protected boolean doReadRequestLine(InputBuf buffer) {
-		int size = lineParser.parseLine(buffer);
-		if (size < 0) {
-			return false;
-		} else if (size >= lineParser.maxLength) {
+	protected boolean doReadRequestLine() {
+		int start = this.parseLine();
+		if (start == Integer.MAX_VALUE) {
 			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_URI_TOO_LONG);
+			this.clearReadBuffer();
 			return true;
-		} else {
-			char[] seq = lineParser.seq;
-			int start;
-			int end;
-			int len;
-			HttpMethod method = null;
-			start = StringUtil.findNonWhitespace(seq, 0, size);
-			if (start >= size) {
-				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return true;
-			}
-			end = StringUtil.findWhitespace(seq, start, size);
-			if (end >= size) {
-				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return true;
-			}
-			len = end - start;
-			if (len == 3) {
-				if (StringUtil.equals(HttpConsts.GET_CHAR_ARRAY, 0, seq, start, 3)) {
-					method = HttpMethod.GET;
-				} else if (StringUtil.equals(HttpConsts.PUT_CHAR_ARRAY, 0, seq, start, 3)) {
-					method = HttpMethod.PUT;
-				}
-			} else if (len == 4 && StringUtil.equals(HttpConsts.POST_CHAR_ARRAY, 0, seq, start, 4)) {
-				method = HttpMethod.POST;
-			} else if (len == 6 && StringUtil.equals(HttpConsts.DELETE_CHAR_ARRAY, 0, seq, start, 6)) {
-				method = HttpMethod.DELETE;
-			}
-			if (method == null) {
-				this.handleInvalidHttpresutst(HttpResponseStatus.METHOD_NOT_ALLOWED);
-				return true;
-			}
-			end = StringUtil.findWhitespace(seq, start, size);
-			if (end >= size) {
-				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return true;
-			}
-			int qStart = 0;
-			int hStart = Integer.MAX_VALUE;
-			String qs = null; // QueryString
-			String hs = null; // HashString
-			String uri = null;
-			int pEnd = end;
-			if (seq[start] == '/' || seq[start] == '\\') {
-				for (int i = start + 1; i < end; ++i) {
-					if (seq[i] == '?') {
-						qStart = i;
-						pEnd = i;
-						break;
-					}
-				}
-				for (int i = Integer.max(start, qStart) + 1; i < end; ++i) {
-					if (seq[i] == '#') {
-						hStart = i;
-						pEnd = Integer.min(pEnd, i);
-						break;
-					}
-				}
-				uri = StringUtil.normalize(seq, start, pEnd);
-				if (qStart > 0) {
-					++qStart;
-					int qEnd = Integer.min(end, hStart);
-					if (qStart < qEnd) {
-						qs = new String(seq, qStart, qEnd - qStart);
-					}
-				}
-				if (hStart < Integer.MAX_VALUE) {
-					++hStart;
-					if (hStart < end) {
-						hs = new String(seq, hStart, end - qStart);
-					}
-				}
-			} else {
-				this.handleInvalidHttpresutst(HttpResponseStatus.METHOD_NOT_ALLOWED);
-				return true;
-			}
+		}
 
-			uri = StringUtil.normalize(seq, start, end);
-			if (uri == null) {
-				this.handleInvalidHttpresutst(HttpResponseStatus.METHOD_NOT_ALLOWED);
-				return true;
-			}
-
-			start = StringUtil.findNonWhitespace(seq, end, size);
-			if (start >= size) {
-				this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
-				return true;
-			}
-			end = StringUtil.findEndOfString(seq, start, size);
-			if ((end - start == 8) && StringUtil.equals(HttpConsts.HTTP11, 0, seq, start, 8)) {
-				this.request = this.newRequest(method, uri, qs, hs);
-				this.response = this.request.response;
-				this.currentState = HTTP_STATE_READ_HEADER;
-				return true;
-			}
+		HttpMethod method = null;
+		start = StringUtil.findNonWhitespace(this.rBytes, start, lineEnd);
+		if (start >= lineEnd) {
 			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
 			return true;
 		}
+		int fEnd = StringUtil.findWhitespace(this.rBytes, start, lineEnd);
+		if (fEnd >= lineEnd) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
+			return true;
+		}
+		int len = fEnd - start;
+		if (len == 3) {
+			if (StringUtil.equals(HttpConsts.GET_BYTE_ARRAY, 0, this.rBytes, start, 3)) {
+				method = HttpMethod.GET;
+			} else if (StringUtil.equals(HttpConsts.PUT_BYTE_ARRAY, 0, rBytes, start, 3)) {
+				method = HttpMethod.PUT;
+			}
+		} else if (len == 4 && StringUtil.equals(HttpConsts.POST_BYTE_ARRAY, 0, rBytes, start, 4)) {
+			method = HttpMethod.POST;
+		} else if (len == 6 && StringUtil.equals(HttpConsts.DELETE_BYTE_ARRAY, 0, rBytes, start, 6)) {
+			method = HttpMethod.DELETE;
+		}
+		if (method == null) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.METHOD_NOT_ALLOWED);
+			return true;
+		}
+
+		start = StringUtil.findNonWhitespace(rBytes, fEnd, lineEnd);
+		if (start >= lineEnd) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
+			return true;
+		}
+		fEnd = StringUtil.findWhitespace(this.rBytes, start, lineEnd);
+		if (fEnd >= lineEnd) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
+			return true;
+		}
+
+		int qStart = 0;
+		int hStart = Integer.MAX_VALUE;
+		String qs = null; // QueryString
+		String hs = null; // HashString
+		String uri = null;
+		int pEnd = fEnd;
+		if (this.rBytes[start] == '/' || rBytes[start] == '\\') {
+			for (int i = start + 1; i < fEnd; ++i) {
+				if (rBytes[i] == '?') {
+					qStart = i;
+					pEnd = i;
+					break;
+				}
+			}
+			for (int i = Integer.max(start, qStart) + 1; i < fEnd; ++i) {
+				if (rBytes[i] == '#') {
+					hStart = i;
+					pEnd = Integer.min(pEnd, i);
+					break;
+				}
+			}
+			uri = StringUtil.normalize(rBytes, start, pEnd);
+			if (qStart > 0) {
+				++qStart;
+				int qEnd = Integer.min(fEnd, hStart);
+				if (qStart < qEnd) {
+					qs = new String(rBytes, qStart, qEnd - qStart);
+				}
+			}
+			if (hStart < Integer.MAX_VALUE) {
+				++hStart;
+				if (hStart < fEnd) {
+					hs = new String(rBytes, hStart, fEnd - qStart);
+				}
+			}
+		} else {
+			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
+			return true;
+		}
+
+		if (uri == null) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
+			return true;
+		}
+
+		start = StringUtil.findNonWhitespace(rBytes, fEnd, lineEnd);
+		if (start >= lineEnd) {
+			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
+			return true;
+		}
+		fEnd = StringUtil.findEndOfString(rBytes, start, lineEnd);
+		if ((fEnd - start == 8) && StringUtil.equals(HttpConsts.HTTP11_BYTE_ARRAY, 0, rBytes, start, 8)) {
+			this.request = this.newRequest(method, uri, qs, hs);
+			this.response = this.request.response;
+			this.currentState = HTTP_STATE_READ_HEADER;
+			return true;
+		}
+		this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
+		return true;
 	}
 
 	protected void configRequest() {
@@ -556,9 +509,9 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		}
 	}
 
-	protected void requestBodyRead(InputBuf ibuf) {
+	protected void requestBodyRead(int len, boolean end) {
 		try {
-			request.requestExecutor.requestBody(this.request, ibuf);
+			request.requestExecutor.requestBody(this.request, this.rBytes, this.ridx, len, end);
 		} catch (Throwable e) {
 			handleInternalException(e);
 		}
@@ -592,33 +545,50 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		response.setStatus(HttpResponseStatus.INTERNAL_SERVER_ERROR);
 		response.unsafeContentLength(buf.length);
 		response.unsafeWrite(buf, 0, buf.length);
-		response.unsafeFlush();
+//		response.unsafeFlush();
 		request.setRequestExecutor(IGRONE_EXECUTOR);
 	}
 
-	private boolean doSkipControlChars(InputBuf buf) {
-		if (!buf.skipControlCharacters()) {
-			return false;
+	private boolean doSkipControlChars() {
+		while (widx > ridx) {
+			int c = (int) (this.rBytes[this.ridx++] & 0xFF);
+			if (!Character.isISOControl(c) && !Character.isWhitespace(c)) {
+				ridx--;
+				currentState = HTTP_STATE_READ_INITIAL;
+				return true;
+			}
 		}
-		if (this.request != null) {
-			this.handleInvalidHttpresutst(HttpResponseStatus.TOO_MANY_REQUESTS);
-			return true;
-		}
-		currentState = HTTP_STATE_READ_INITIAL;
-		return true;
+		this.clearReadBuffer();
+		return false;
 	}
 
-	private boolean readInChunked(InputBuf buf) {
+	public int getChunkSize(int start) {
+		String hex = StringUtil.trim(this.rBytes, start, lineEnd);
+		for (int i = 0; i < hex.length(); i++) {
+			char c = hex.charAt(i);
+			if (c == ';' || Character.isWhitespace(c) || Character.isISOControl(c)) {
+				hex = hex.substring(0, i);
+				break;
+			}
+		}
+		try {
+			return Integer.parseInt(hex, 16);
+		} catch (NumberFormatException e) {
+			return Integer.MIN_VALUE;
+		}
+	}
+
+	private boolean readInChunked() {
 		for (;;) {
 			if (currentState == HTTP_STATE_READ_CHUNK_SIZE) {
-				int lineSize = lineParser.parseLine(buf);
-				if (lineSize < 0) {
+				int start = this.parseLine();
+				if (start < 0) {
 					return false;
-				} else if (lineSize >= lineParser.maxLength) {
+				} else if (start == Integer.MAX_VALUE) {
 					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
 					return true;
 				}
-				this.chunkSize = lineParser.getChunkSize(lineSize);
+				this.chunkSize = getChunkSize(start);
 				if (chunkSize == Integer.MIN_VALUE) {
 					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
 					return true;
@@ -631,73 +601,69 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			}
 			if (currentState == HTTP_STATE_READ_CHUNKED_CONTENT) {
 				assert chunkSize <= Integer.MAX_VALUE;
-				long nr = buf.readableBytes();
+				long nr = this.widx - this.ridx;
 				if (nr > chunkSize) {
-					InputBuf dbuf = buf.duplicate((int) chunkSize);
-					this.requestBodyRead(dbuf);
-					dbuf.release();
-					buf.skipBytes((int) chunkSize);
+					this.requestBodyRead((int) chunkSize, false);
+					this.ridx += chunkSize;
 					this.currentState = HTTP_STATE_READ_CHUNK_DELIMITER;
 				} else if (nr > 0) {
-					InputBuf dBuf = buf.slice();
-					this.requestBodyRead(dBuf);
-					dBuf.release();
-					buf.skipAllBytes();
+					this.requestBodyRead((int) nr, false);
 					chunkSize -= nr;
 					if (chunkSize == 0) {
 						this.currentState = HTTP_STATE_READ_CHUNK_DELIMITER;
 					}
+					this.compactReadBuffer();
 					return false;
 				} else {
+					this.compactReadBuffer();
 					return false;
 				}
 			}
 			if (currentState == HTTP_STATE_READ_CHUNK_DELIMITER) {
-				while (buf.readable()) {
-					if (buf.readByte() == 10) {
-						currentState = HTTP_STATE_READ_CHUNK_SIZE;
-						break;
+				while (this.ridx < this.widx) {
+					if (this.rBytes[this.ridx++] == 10) {
+						this.currentState = HTTP_STATE_READ_CHUNK_SIZE;
 					}
 				}
 				if (currentState == HTTP_STATE_READ_CHUNK_DELIMITER) {
+					this.clearReadBuffer();
 					return false;
 				}
 			}
 			if (currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
-				return this.readTrailingHeaders(buf);
+				return this.readTrailingHeaders();
 			}
 		}
 	}
 
 	@Override
-	protected void handleRead(InputBuf buf, int len) {
+	protected void handleRead(int len) {
 		this.removeKeepAliveCheck();
 		if (len > 0) {
 			for (;;) {
 				if (currentState == HTTP_STATE_SKIP_CONTROL_CHARS) {
-					if (!this.doSkipControlChars(buf)) {
+					if (!this.doSkipControlChars()) {
 						this.addKeepAliveCheck();
 						return;
 					}
 				}
 				if (currentState == HTTP_STATE_READ_INITIAL) {
-					if (!this.doReadRequestLine(buf)) {
+					if (!this.doReadRequestLine()) {
 						this.addKeepAliveCheck();
 						return;
 					}
 				}
 				if (currentState == HTTP_STATE_READ_HEADER) {
-					if (!this.doReadHeaders(buf)) {
+					if (!this.doReadHeaders()) {
 						this.addKeepAliveCheck();
 						return;
 					}
 				}
 				if (currentState == HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT) {
-					if (buf.readable()) {
-						InputBuf ibuf = buf.slice();
-						this.requestBodyRead(ibuf);
-						ibuf.release();
-						buf.skipAllBytes();
+					int dlen = this.widx - this.ridx;
+					if (len > 0) {
+						this.requestBodyRead(dlen, false);
+						this.clearReadBuffer();
 					}
 					if (!request.supended) {
 						this.addKeepAliveCheck();
@@ -707,7 +673,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 					return;
 				}
 				if (currentState == HTTP_STATE_READ_FIXED_LENGTH_CONTENT) {
-					if (!this.handleFixLenthRead(buf)) {
+					if (!this.handleFixLenthRead()) {
 						if (request.supended) {
 							this.cleanOpRead();
 						} else {
@@ -718,7 +684,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				}
 				if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT
 						|| currentState == HTTP_STATE_READ_CHUNK_DELIMITER || currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
-					if (!this.readInChunked(buf)) {
+					if (!this.readInChunked()) {
 						if (request.supended) {
 							this.cleanOpRead();
 						} else {
@@ -727,12 +693,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 						return;
 					}
 				}
-
 				if (currentState == HTTP_STATE_INVOKING) {
-					int unReadSize = buf.readableBytes();
-					if (unReadSize > 0) {
-						this.inputCache.offer(buf.retain(), unReadSize);
-					}
 					this.cleanOpRead();
 					return;
 				}
@@ -749,7 +710,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	protected void handleCloseInput() {
 		switch (currentState) {
 			case HTTP_STATE_SKIP_CONTROL_CHARS: {
-				this.write(EmptyBuf.INSTANCE, closeTask);
+				this.flushData(closeTask);
 				break;
 			}
 			case HTTP_STATE_READ_INITIAL: {
@@ -761,6 +722,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				break;
 			}
 			case HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT: {
+				this.requestBodyRead(0, true);
 				this.requestInvoke();
 				break;
 			}
@@ -773,7 +735,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				break;
 			}
 			case HTTP_STATE_INVOKING: {
-				this.inputCache.offer(EmptyBuf.INSTANCE, -1);
+				// this.inputCache.offer(EmptyBuf.INSTANCE, -1);
 				break;
 			}
 			// case HTTP_STATE_IGNORE:{
@@ -795,82 +757,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		cacheRequest.response.hrs = HttpResponseStatus.OK;
 		cacheRequest.supended = false;
 		return cacheRequest;
-	}
-
-	private static class LineParser implements ByteProcessor {
-		private final char[] seq;
-		private final int maxLength;
-		private int size;
-
-		LineParser(int maxLength) {
-			this.seq = new char[maxLength];
-			this.maxLength = maxLength;
-		}
-
-		public int parse(InputBuf buffer) {
-			int i = buffer.forEachByte(this);
-			if (i > 0) {
-				if (size >= maxLength) {
-					return size;
-				}
-				buffer.skipBytes(i + 1);
-			} else if (i == 0) {
-				buffer.skipBytes(1);
-			}
-			return i;
-		}
-
-		// public String[] parseHttpLine(InputBuf buffer) throws Exception {
-		// int idx = parse(buffer);
-		// if (idx < 0) {
-		// return null;
-		// }
-		// String[] ret = this.splitInitialLine();
-		// this.size = 0;
-		// return ret;
-		// }
-
-		public int parseLine(InputBuf buffer) {
-			int idx = parse(buffer);
-			if (idx < 0) {
-				return -1;
-			}
-			int ret = this.size;
-			this.size = 0;
-			return ret;
-		}
-
-		@Override
-		public boolean process(byte value) {
-			char nextByte = (char) (value & 0xFF);
-			if (nextByte == HttpConsts.CR) {
-				return true;
-			}
-			if (nextByte == HttpConsts.LF) {
-				return false;
-			}
-			seq[size++] = nextByte;
-			if (size >= maxLength) {
-				return true;
-			}
-			return true;
-		}
-
-		public int getChunkSize(int length) {
-			String hex = StringUtil.trim(seq, 0, length);
-			for (int i = 0; i < hex.length(); i++) {
-				char c = hex.charAt(i);
-				if (c == ';' || Character.isWhitespace(c) || Character.isISOControl(c)) {
-					hex = hex.substring(0, i);
-					break;
-				}
-			}
-			try {
-				return Integer.parseInt(hex, 16);
-			} catch (NumberFormatException e) {
-				return Integer.MIN_VALUE;
-			}
-		}
 	}
 
 	protected class HttpServerRequest implements HttpRequest {
@@ -958,8 +844,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		protected boolean requestKeepAlive = true;
 		protected HttpResponseStatus hrs = HttpResponseStatus.OK;
 
-		private OutputBuf cacheOutputBuf = null;
-
 		protected TaskCompletionHandler wrap(TaskCompletionHandler task) {
 			return new ResponseCloseTask(this.requestKeepAlive && this.hrs.isKeepAlive(), task);
 		}
@@ -973,7 +857,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			this.headers.add(name, value);
 		}
 
-		protected OutputBuf sendResponseLineAndHeader() {
+		protected void sendResponseLineAndHeader() {
 			boolean pkeepAlive = this.requestKeepAlive && this.hrs.isKeepAlive();
 			if (!pkeepAlive)
 				this.headers.set(HttpConsts.CONNECTION, HttpConsts.CLOSE);
@@ -981,15 +865,14 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				this.headers.set(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			}
 			byte[] bs = hrs.getDefautContent();
-			OutputBuf buf = executor.allocBuffer();
-			buf = writeAscii(buf, "HTTP/1.1 " + hrs.getCode() + ' ');
-			buf = writeBytes(buf, bs, 0, bs.length);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
+			byte[] lbs = ("HTTP/1.1 " + hrs.getCode() + ' ').getBytes(StringUtil.US_ASCII);
+			writeData(lbs, 0, lbs.length);
+			writeData(bs, 0, bs.length);
+			writeData(HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
 			for (java.util.Map.Entry<String, String> entry : this.headers) {
-				buf = writeHttpHeader(buf, entry.getKey(), entry.getValue());
+				writeHttpHeader(entry.getKey(), entry.getValue());
 			}
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
-			return buf;
+			writeData(HttpConsts.CRLF, 0, HttpConsts.CRLF.length);
 		}
 
 		@Override
@@ -1003,10 +886,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 
 		@Override
 		public void fail() {
-			if (this.cacheOutputBuf != null) {
-				this.cacheOutputBuf.release();
-				this.cacheOutputBuf = null;
-			}
 			close();
 		}
 
@@ -1025,12 +904,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				this.headers.add(HttpConsts.CONNECTION, HttpConsts.CLOSE);
 			this.headers.add(HttpConsts.CONTENT_LENGTH, Integer.toString(cl));
 			this.headers.add(HttpConsts.CONTENT_TYPE, HttpConsts.TEXT_HTML_UTF8);
-			OutputBuf buf = this.sendResponseLineAndHeader();
+			this.sendResponseLineAndHeader();
 			if (cl > 0) {
-				buf = writeBytes(buf, content, 0, content.length);
+				flushData(content, 0, content.length, pkeepAlive ? beginRead : closeTask);
+			} else {
+				flushData(pkeepAlive ? beginRead : closeTask);
 			}
-			HttpChannel.this.write(buf.input(), pkeepAlive ? beginRead : closeTask);
-			buf.release();
 		}
 
 		@Override
@@ -1049,16 +928,15 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			byte[] chunkedBuffer = executor.ouputCalcBuffer;
 			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
+				this.sendResponseLineAndHeader();
 				state = STATE_SENDING_DATA;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
-			OutputBuf buf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), chunkedBuffer, idx,
-					chunkedBuffer.length - idx);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
-			buf = writeBytes(buf, buffer, index, length);
-			this.cacheOutputBuf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
+			writeData(chunkedBuffer, idx, chunkedBuffer.length - idx);
+			writeData(HttpConsts.CRLF, 0, 2);
+			writeData(buffer, index, length);
+			writeData(HttpConsts.CRLF, 0, 2);
 		}
 
 		@Override
@@ -1072,20 +950,15 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			byte[] chunkedBuffer = executor.ouputCalcBuffer;
 			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
+				this.sendResponseLineAndHeader();
 				state = STATE_SENDING_DATA;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
-			OutputBuf buf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), chunkedBuffer, idx,
-					chunkedBuffer.length - idx);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
-			buf = writeBytes(buf, buffer, index, length);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
-			InputBuf in = buf.input();
-			buf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(in, task);
+			writeData(chunkedBuffer, idx, chunkedBuffer.length - idx);
+			writeData(HttpConsts.CRLF, 0, 2);
+			writeData(buffer, index, length);
+			flushData(HttpConsts.CRLF, 0, 2, task);
 
 		}
 
@@ -1097,31 +970,25 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert buffer.length >= (index + length);
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) == null;
 			assert this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
-			byte[] chunkedBuffer = executor.ouputCalcBuffer;
-			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
+
 			if (state == STATE_INIT) {
 				state = STATE_SENDED;
 				this.headers.remove(HttpConsts.TRANSFER_ENCODING);
 				this.headers.add(HttpConsts.CONTENT_LENGTH, Integer.toString(length));
-				OutputBuf buf = this.sendResponseLineAndHeader();
-				buf = writeBytes(buf, buffer, index, length);
-				InputBuf in = buf.input();
-				HttpChannel.this.write(in, this.defaultFlushTask());
+				this.sendResponseLineAndHeader();
+				flushData(buffer, index, length, this.defaultFlushTask());
 				return;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			OutputBuf buf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), chunkedBuffer, idx,
-					chunkedBuffer.length - idx);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
-			buf = writeBytes(buf, buffer, index, length);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
-			buf = writeBytes(buf, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length);
-			InputBuf in = buf.input();
-			buf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(in, this.defaultFlushTask());
+			byte[] chunkedBuffer = executor.ouputCalcBuffer;
+			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
+			writeData(chunkedBuffer, idx, chunkedBuffer.length - idx);
+			writeData(HttpConsts.CRLF, 0, 2);
+			writeData(buffer, index, length);
+			writeData(HttpConsts.CRLF, 0, 2);
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.defaultFlushTask());
 		}
 
 		public void flush() {
@@ -1131,21 +998,14 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				state = STATE_SENDED;
 				this.headers.remove(HttpConsts.TRANSFER_ENCODING);
 				this.headers.add(HttpConsts.CONTENT_LENGTH, StringUtil.ZERO_STRING);
-				OutputBuf buf = this.sendResponseLineAndHeader();
-				InputBuf in = buf.input();
-				buf = null;
-				HttpChannel.this.write(in, this.defaultFlushTask());
+				this.sendResponseLineAndHeader();
+				flushData(this.defaultFlushTask());
 				return;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			OutputBuf buf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER,
-					0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length);
-			InputBuf in = buf.input();
-			buf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(in, this.defaultFlushTask());
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.defaultFlushTask());
 		}
 
 		@Override
@@ -1157,32 +1017,26 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert task != null;
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) == null;
 			assert this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
-			byte[] chunkedBuffer = executor.ouputCalcBuffer;
-			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
+
 			if (state == STATE_INIT) {
 				state = STATE_SENDED;
 				this.headers.remove(HttpConsts.TRANSFER_ENCODING);
 				this.headers.add(HttpConsts.CONTENT_LENGTH, Integer.toString(length));
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
-				this.cacheOutputBuf = writeBytes(this.cacheOutputBuf, buffer, index, length);
-				InputBuf in = this.cacheOutputBuf.input();
-				this.cacheOutputBuf.release();
-				this.cacheOutputBuf = null;
-				HttpChannel.this.write(in, this.wrap(task));
+				this.sendResponseLineAndHeader();
+				flushData(buffer, index, length, this.wrap(task));
+
 				return;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
-			OutputBuf buf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), chunkedBuffer, idx,
-					chunkedBuffer.length - idx);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
-			buf = writeBytes(buf, buffer, index, length);
-			buf = writeBytes(buf, HttpConsts.CRLF, 0, 2);
-			buf = writeBytes(buf, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length);
-			InputBuf in = buf.input();
-			buf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(in, this.wrap(task));
+			byte[] chunkedBuffer = executor.ouputCalcBuffer;
+			int idx = StringUtil.toUnsignedString(chunkedBuffer, length, 4);
+			writeData(chunkedBuffer, idx, chunkedBuffer.length - idx);
+			writeData(HttpConsts.CRLF, 0, 2);
+			writeData(buffer, index, length);
+			writeData(HttpConsts.CRLF, 0, 2);
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.wrap(task));
+
 		}
 
 		@Override
@@ -1194,21 +1048,14 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				state = STATE_SENDED;
 				this.headers.remove(HttpConsts.TRANSFER_ENCODING);
 				this.headers.add(HttpConsts.CONTENT_LENGTH, StringUtil.ZERO_STRING);
-				OutputBuf buf = this.sendResponseLineAndHeader();
-				InputBuf in = buf.input();
-				buf = null;
-				HttpChannel.this.write(in, this.wrap(task));
+				sendResponseLineAndHeader();
+				flushData(this.wrap(task));
 				return;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			this.cacheOutputBuf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(),
-					HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length);
-			InputBuf in = this.cacheOutputBuf.input();
-			this.cacheOutputBuf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(in, this.wrap(task));
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.wrap(task));
 		}
 
 		@Override
@@ -1227,12 +1074,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) != null;
 			assert !this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
+				this.sendResponseLineAndHeader();
 				state = STATE_SENDING_DATA;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
-			this.cacheOutputBuf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), buffer, index, length);
+			writeData(buffer, index, length);
 		}
 
 		@Override
@@ -1246,16 +1093,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert !this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
+				this.sendResponseLineAndHeader();
 				state = STATE_SENDING_DATA;
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
-			this.cacheOutputBuf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), buffer, index, length);
-			InputBuf buf = this.cacheOutputBuf.input();
-			this.cacheOutputBuf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(buf, task);
+			flushData(buffer, index, length, task);
 		}
 
 		@Override
@@ -1268,17 +1111,13 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) != null;
 			assert !this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
+				this.sendResponseLineAndHeader();
 
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			this.cacheOutputBuf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), buffer, index, length);
-			InputBuf buf = this.cacheOutputBuf.input();
-			this.cacheOutputBuf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(buf, wrap(task));
+			flushData(buffer, index, length, wrap(task));
 		}
 
 		@Override
@@ -1290,16 +1129,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) != null;
 			assert !this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
+				this.sendResponseLineAndHeader();
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			this.cacheOutputBuf = writeBytes(this.cacheOutputBuf != null ? this.cacheOutputBuf : executor.allocBuffer(), buffer, index, length);
-			InputBuf buf = this.cacheOutputBuf.input();
-			this.cacheOutputBuf.release();
-			this.cacheOutputBuf = null;
-			HttpChannel.this.write(buf, defaultFlushTask());
+			flushData(buffer, index, length, defaultFlushTask());
 		}
 
 		@Override
@@ -1308,19 +1143,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert !this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			assert task != null;
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
+				this.sendResponseLineAndHeader();
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			if (this.cacheOutputBuf != null) {
-				InputBuf buf = this.cacheOutputBuf.input();
-				this.cacheOutputBuf.release();
-				this.cacheOutputBuf = null;
-				HttpChannel.this.write(buf, wrap(task));
-			} else {
-				HttpChannel.this.write(EmptyBuf.INSTANCE, wrap(task));
-			}
+			flushData(wrap(task));
 		}
 
 		@Override
@@ -1328,20 +1156,13 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			assert this.headers.get(HttpConsts.CONTENT_LENGTH) != null;
 			assert !this.headers.containsIgnoreCase(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			if (state == STATE_INIT) {
-				this.cacheOutputBuf = this.sendResponseLineAndHeader();
-			
+				this.sendResponseLineAndHeader();
+
 			} else if (state == STATE_SENDED) {
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			if (this.cacheOutputBuf != null) {
-				InputBuf buf = this.cacheOutputBuf.input();
-				this.cacheOutputBuf.release();
-				this.cacheOutputBuf = null;
-				HttpChannel.this.write(buf, defaultFlushTask());
-			} else {
-				HttpChannel.this.write(EmptyBuf.INSTANCE, defaultFlushTask());
-			}
+			flushData(defaultFlushTask());
 		}
 	}
 
@@ -1408,8 +1229,8 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		}
 
 		@Override
-		public void requestBody(HttpRequest request, InputBuf buf) {
-			buf.skipAllBytes();
+		public void requestBody(HttpRequest request, byte[] b, int i, int l, boolean a) {
+
 		}
 
 		@Override

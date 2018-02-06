@@ -282,6 +282,11 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 	}
 
 	private boolean netProcessing = false;
+	
+	public boolean isNetProcessing() {
+		return netProcessing;
+	}
+
 	public void handleRunningTask() {
 		try {
 			if (runningTasks.isEmpty()) {

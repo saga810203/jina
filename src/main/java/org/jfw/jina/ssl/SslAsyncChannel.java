@@ -34,12 +34,10 @@ public class SslAsyncChannel implements NioAsyncChannel {
 	private boolean handshaked = false;
 
 	private JdkSslEngine wrapSslEngine;
-	
-	
+
 	public JdkSslEngine getWrapSslEngine() {
 		return wrapSslEngine;
 	}
-
 
 	private NioAsyncChannel delegatedChannel;
 	private final boolean isClient;
@@ -114,7 +112,6 @@ public class SslAsyncChannel implements NioAsyncChannel {
 		// TODO Auto-generated method stub
 
 	}
-
 
 	private ByteBuffer readBuffer;
 
@@ -196,6 +193,9 @@ public class SslAsyncChannel implements NioAsyncChannel {
 		// return;
 		// }
 		// this.packetLength = 0;
+
+		int dataLen = this.writeIndex - this.readIndex;
+		int perv = 0;
 		for (;;) {
 			if (this.writeIndex - this.readIndex > 0) {
 				if (!unwrap()) {
@@ -215,13 +215,19 @@ public class SslAsyncChannel implements NioAsyncChannel {
 							task.run();
 						}
 						break;
-					case NEED_UNWRAP:
+					case NEED_UNWRAP: {
+						int dl = this.writeIndex - this.readIndex;
+						if (dl == 0 || perv == dl) {
+							return;
+						}
+						perv = dl;
 						break;
+					}
 					case NEED_WRAP:
 						try {
 							this.wrapNonAppData();
 						} catch (SSLException e) {
-							//TODO log  and exit;
+							// TODO log and exit;
 							this.close();
 						}
 						return;
@@ -234,7 +240,7 @@ public class SslAsyncChannel implements NioAsyncChannel {
 						throw new IllegalStateException("Unknown handshake status: " + state);
 
 				}
-				if(handshaked){
+				if (handshaked) {
 					this.key.interestOps(0);
 					this.swichHandle();
 					return;
@@ -242,17 +248,19 @@ public class SslAsyncChannel implements NioAsyncChannel {
 			}
 		}
 	}
-	
-	public Queue<ByteBuffer> getOutCache(){
+
+	public Queue<ByteBuffer> getOutCache() {
 		return this.outQueue;
 	}
-	public ByteBuffer getReadBuffer(){
+
+	public ByteBuffer getReadBuffer() {
 		return this.readBuffer;
 	}
-	public static
-	
-	private void swichHandle(){
-		
+
+
+
+	private void swichHandle() {
+
 	}
 
 	private boolean unwrap() {
@@ -285,129 +293,134 @@ public class SslAsyncChannel implements NioAsyncChannel {
 		return true;
 	}
 
-//	private boolean unwrap(int length) throws SSLException {
-//		final int originalLength = length;
-//		boolean wrapLater = false;
-//		boolean notifyClosure = false;
-//		int overflowReadableBytes = -1;
-//		ByteBuffer buffer = ByteBuffer.allocate(length);
-//		try {
-//			unwrapLoop: for (;;) {
-//				final SSLEngineResult result = wrapSslEngine
-//						.unwrap((ByteBuffer) this.readBuffer.duplicate().position(this.readIndex).limit(this.readIndex + length), buffer);
-//				final Status status = result.getStatus();
-//
-//				final int produced = result.bytesProduced();
-//				final int consumed = result.bytesConsumed();
-//				this.readIndex += result.bytesConsumed();
-//				length -= consumed;
-//				switch (status) {
-//					case BUFFER_OVERFLOW:
-//						this.cacheUnwrapData(buffer, produced);
-//						continue;
-//					case CLOSED:
-//						this.close();
-//						return false;
-//					default:
-//						break;
-//				}
-//				final HandshakeStatus handshakeStatus = result.getHandshakeStatus();
-//				switch (handshakeStatus) {
-//					case NEED_UNWRAP:
-//						break;
-//					case NEED_WRAP:
-//						// If the wrap operation transitions the status to
-//						// NOT_HANDSHAKING and there is no more data to
-//						// unwrap then the next call to unwrap will not produce
-//						// any data. We can avoid the potentially
-//						// costly unwrap operation and break out of the loop.
-//						wrapNonAppData();
-//						return;
-//					case NEED_TASK:
-//						runDelegatedTasks();
-//						break;
-//					case FINISHED:
-//						setHandshakeSuccess();
-//						wrapLater = true;
-//
-//						// We 'break' here and NOT 'continue' as android API
-//						// version 21 has a bug where they consume
-//						// data from the buffer but NOT correctly set the
-//						// SSLEngineResult.bytesConsumed().
-//						// Because of this it will raise an exception on the
-//						// next iteration of the for loop on android
-//						// API version 21. Just doing a break will work here as
-//						// produced and consumed will both be 0
-//						// and so we break out of the complete for (;;) loop and
-//						// so call decode(...) again later on.
-//						// On other platforms this will have no negative effect
-//						// as we will just continue with the
-//						// for (;;) loop if something was either consumed or
-//						// produced.
-//						//
-//						// See:
-//						// - https://github.com/netty/netty/issues/4116
-//						// -
-//						// https://code.google.com/p/android/issues/detail?id=198639&thanks=198639&ts=1452501203
-//						break;
-//					case NOT_HANDSHAKING:
-//						if (setHandshakeSuccessIfStillHandshaking()) {
-//							wrapLater = true;
-//							continue;
-//						}
-//						if (flushedBeforeHandshake) {
-//							// We need to call wrap(...) in case there was a
-//							// flush done before the handshake completed.
-//							//
-//							// See https://github.com/netty/netty/pull/2437
-//							flushedBeforeHandshake = false;
-//							wrapLater = true;
-//						}
-//						// If we are not handshaking and there is no more data
-//						// to unwrap then the next call to unwrap
-//						// will not produce any data. We can avoid the
-//						// potentially costly unwrap operation and break
-//						// out of the loop.
-//						if (length == 0) {
-//							break unwrapLoop;
-//						}
-//						break;
-//					default:
-//						throw new IllegalStateException("unknown handshake status: " + handshakeStatus);
-//				}
-//
-//				if (status == Status.BUFFER_UNDERFLOW || consumed == 0 && produced == 0) {
-//					if (handshakeStatus == HandshakeStatus.NEED_UNWRAP) {
-//						// The underlying engine is starving so we need to feed
-//						// it with more data.
-//						// See https://github.com/netty/netty/pull/5039
-//						readIfNeeded(ctx);
-//					}
-//
-//					break;
-//				}
-//			}
-//
-//			if (wrapLater) {
-//				wrap(ctx, true);
-//			}
-//
-//			if (notifyClosure) {
-//				notifyClosePromise(null);
-//			}
-//		} finally {
-//			if (decodeOut != null) {
-//				if (decodeOut.isReadable()) {
-//					firedChannelRead = true;
-//
-//					ctx.fireChannelRead(decodeOut);
-//				} else {
-//					decodeOut.release();
-//				}
-//			}
-//		}
-//		return originalLength - length;
-//	}
+	// private boolean unwrap(int length) throws SSLException {
+	// final int originalLength = length;
+	// boolean wrapLater = false;
+	// boolean notifyClosure = false;
+	// int overflowReadableBytes = -1;
+	// ByteBuffer buffer = ByteBuffer.allocate(length);
+	// try {
+	// unwrapLoop: for (;;) {
+	// final SSLEngineResult result = wrapSslEngine
+	// .unwrap((ByteBuffer)
+	// this.readBuffer.duplicate().position(this.readIndex).limit(this.readIndex
+	// + length), buffer);
+	// final Status status = result.getStatus();
+	//
+	// final int produced = result.bytesProduced();
+	// final int consumed = result.bytesConsumed();
+	// this.readIndex += result.bytesConsumed();
+	// length -= consumed;
+	// switch (status) {
+	// case BUFFER_OVERFLOW:
+	// this.cacheUnwrapData(buffer, produced);
+	// continue;
+	// case CLOSED:
+	// this.close();
+	// return false;
+	// default:
+	// break;
+	// }
+	// final HandshakeStatus handshakeStatus = result.getHandshakeStatus();
+	// switch (handshakeStatus) {
+	// case NEED_UNWRAP:
+	// break;
+	// case NEED_WRAP:
+	// // If the wrap operation transitions the status to
+	// // NOT_HANDSHAKING and there is no more data to
+	// // unwrap then the next call to unwrap will not produce
+	// // any data. We can avoid the potentially
+	// // costly unwrap operation and break out of the loop.
+	// wrapNonAppData();
+	// return;
+	// case NEED_TASK:
+	// runDelegatedTasks();
+	// break;
+	// case FINISHED:
+	// setHandshakeSuccess();
+	// wrapLater = true;
+	//
+	// // We 'break' here and NOT 'continue' as android API
+	// // version 21 has a bug where they consume
+	// // data from the buffer but NOT correctly set the
+	// // SSLEngineResult.bytesConsumed().
+	// // Because of this it will raise an exception on the
+	// // next iteration of the for loop on android
+	// // API version 21. Just doing a break will work here as
+	// // produced and consumed will both be 0
+	// // and so we break out of the complete for (;;) loop and
+	// // so call decode(...) again later on.
+	// // On other platforms this will have no negative effect
+	// // as we will just continue with the
+	// // for (;;) loop if something was either consumed or
+	// // produced.
+	// //
+	// // See:
+	// // - https://github.com/netty/netty/issues/4116
+	// // -
+	// //
+	// https://code.google.com/p/android/issues/detail?id=198639&thanks=198639&ts=1452501203
+	// break;
+	// case NOT_HANDSHAKING:
+	// if (setHandshakeSuccessIfStillHandshaking()) {
+	// wrapLater = true;
+	// continue;
+	// }
+	// if (flushedBeforeHandshake) {
+	// // We need to call wrap(...) in case there was a
+	// // flush done before the handshake completed.
+	// //
+	// // See https://github.com/netty/netty/pull/2437
+	// flushedBeforeHandshake = false;
+	// wrapLater = true;
+	// }
+	// // If we are not handshaking and there is no more data
+	// // to unwrap then the next call to unwrap
+	// // will not produce any data. We can avoid the
+	// // potentially costly unwrap operation and break
+	// // out of the loop.
+	// if (length == 0) {
+	// break unwrapLoop;
+	// }
+	// break;
+	// default:
+	// throw new IllegalStateException("unknown handshake status: " +
+	// handshakeStatus);
+	// }
+	//
+	// if (status == Status.BUFFER_UNDERFLOW || consumed == 0 && produced == 0)
+	// {
+	// if (handshakeStatus == HandshakeStatus.NEED_UNWRAP) {
+	// // The underlying engine is starving so we need to feed
+	// // it with more data.
+	// // See https://github.com/netty/netty/pull/5039
+	// readIfNeeded(ctx);
+	// }
+	//
+	// break;
+	// }
+	// }
+	//
+	// if (wrapLater) {
+	// wrap(ctx, true);
+	// }
+	//
+	// if (notifyClosure) {
+	// notifyClosePromise(null);
+	// }
+	// } finally {
+	// if (decodeOut != null) {
+	// if (decodeOut.isReadable()) {
+	// firedChannelRead = true;
+	//
+	// ctx.fireChannelRead(decodeOut);
+	// } else {
+	// decodeOut.release();
+	// }
+	// }
+	// }
+	// return originalLength - length;
+	// }
 
 	private static ByteBuffer SSL_EMTPY_BUFFER = ByteBuffer.allocate(0);
 

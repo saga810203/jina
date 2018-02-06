@@ -241,4 +241,5 @@ public interface OutputBuf {
 	InputBuf input();
 	long size();
 	ByteBuffer original();
+	void unsafeWriteIndex(int idx);
 }
