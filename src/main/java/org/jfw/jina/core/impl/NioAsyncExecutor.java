@@ -556,15 +556,15 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 		return new ArrayList<AsyncTask>();
 	}
 	
-	public static void safeInvokeCompleted(TaskCompletionHandler task,AsyncExecutor executor){
+	public void safeInvokeCompleted(TaskCompletionHandler task){
 		try{
-			task.completed(executor);
+			task.completed(this);
 		}catch(Throwable e){
 		}
 	}
-	public static void safeInvokeFailed(TaskCompletionHandler task,Throwable exc,AsyncExecutor executor){
+	public void safeInvokeFailed(TaskCompletionHandler task,Throwable exc){
 		try{
-			task.failed(exc, executor);
+			task.failed(exc, this);
 		}catch(Throwable e){
 		}
 	}

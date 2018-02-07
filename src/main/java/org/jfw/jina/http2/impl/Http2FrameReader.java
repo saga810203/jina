@@ -1,11 +1,7 @@
 package org.jfw.jina.http2.impl;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
-import org.jfw.jina.buffer.InputBuf;
-import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.core.impl.AbstractNioAsyncChannel;
 import org.jfw.jina.http.KeepAliveCheck;
 import org.jfw.jina.http.impl.DefaultHttpHeaders;
@@ -20,10 +16,10 @@ import org.jfw.jina.http2.headers.HpackHeaderField;
 import org.jfw.jina.http2.headers.HpackStaticTable;
 import org.jfw.jina.http2.headers.HpackUtil;
 import org.jfw.jina.util.DQueue.DNode;
-import org.jfw.jina.util.Queue;
 import org.jfw.jina.util.StringUtil;
 
-public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends AbstractNioAsyncChannel<T> implements Http2Connection, FrameWriter, KeepAliveCheck {
+public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends AbstractNioAsyncChannel<T>
+		implements Http2Connection, FrameWriter, KeepAliveCheck {
 	public static final long INVALID_STREAM_ID = Long.MIN_VALUE;
 
 	public static final int FRAME_CONFIG_HEADER_SIZE = 9;
@@ -59,50 +55,49 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	private static final Node ROOT = buildTree(HpackUtil.HUFFMAN_CODES, HpackUtil.HUFFMAN_CODE_LENGTHS);
 
-	 HpackHuffmanDecoder huffmanDecoder = new HpackHuffmanDecoder();
+	HpackHuffmanDecoder huffmanDecoder = new HpackHuffmanDecoder();
 
 	// local Setting
 
-	 boolean localEnablePush = false;
-	 long localMaxConcurrentStreams = Long.MAX_VALUE;
-	 int localInitialWindowSize = 65535;
-	 int localMaxFrameSize = 16777215;
+	boolean localEnablePush = false;
+	long localMaxConcurrentStreams = Long.MAX_VALUE;
+	int localInitialWindowSize = 65535;
+	int localMaxFrameSize = 16777215;
+
+	int localConnectionInitialWinodwSize = 65535;
 
 	// remote Setting
-	 long remoteHeaderTableSize = 4096;
+	long remoteHeaderTableSize = 4096;
 
 	// this (MAX_HEADER_LIST_SIZE) unknow so don't check in recv , but send use
 	// remote setting
-	 long maxHeaderListSize = Long.MAX_VALUE;
+	long maxHeaderListSize = Long.MAX_VALUE;
 
-	 int recvWindowSize = 65535;
+	int recvWindowSize = 65535;
 
-	 HpackDynamicTable remoteDynaTable = new HpackDynamicTable(4096);
+	HpackDynamicTable remoteDynaTable = new HpackDynamicTable(4096);
 
+	final byte[] frameReadBuffer;
+	int frameHeaderIndex = 0;
 
-
-	 final byte[] frameReadBuffer;
-	 int frameHeaderIndex = 0;
-
-	 int payloadLength = 0;
-	 byte frameType = 0;
-	 byte frameFlag = 0;
-	 int streamId = 0;
-	 int payloadIndex = 0;
-	 ByteArrayOutputStream cachePayload;
+	int payloadLength = 0;
+	byte frameType = 0;
+	byte frameFlag = 0;
+	int streamId = 0;
+	int payloadIndex = 0;
+	CacheStream cachePayload;
+	int activeStreams = 0;
 
 	// protected boolean headerProcessing = false;
-	 long streamIdOfHeaders = INVALID_STREAM_ID;
+	long streamIdOfHeaders = INVALID_STREAM_ID;
 
-	 byte currentState = FRAME_STATE_READ_HEADER;
+	byte currentState = FRAME_STATE_READ_HEADER;
 
-	 boolean goAwayed = false;
-	 
-	 
+	boolean goAwayed = false;
 
 	protected Http2FrameReader(T executor, SocketChannel javaChannel) {
-		super(executor,javaChannel);
-		this.cachePayload =new ByteArrayOutputStream();
+		super(executor, javaChannel);
+		this.cachePayload = new CacheStream();
 		this.frameReadBuffer = new byte[64];
 	}
 
@@ -113,13 +108,10 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	protected abstract void handleProtocolError();
 
-	protected boolean fixLenPayload = false;
-
 	protected void handleRead(int len) {
 		this.removeKeepAliveCheck();
 		if (len > 0) {
-			
-			while (this.widx> this.ridx) {
+			while (this.widx > this.ridx) {
 				if (this.currentState == FRAME_STATE_READ_HEADER) {
 					if (!doReadFrameHeader()) {
 						this.addKeepAliveCheck();
@@ -139,6 +131,9 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 					return;
 				}
 			}
+			if(this.activeStreams ==0){
+				this.addKeepAliveCheck();
+			}
 		} else {
 			handleInputClose();
 		}
@@ -147,15 +142,14 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	private boolean doReadFramePayLoad() {
 		int nr = this.widx - this.ridx;
 		int readSize = Integer.min(this.payloadLength - this.payloadIndex, nr);
-		
+
 		if (readSize > 0) {
-			
 			if (nr > readSize) {
-				this.cachePayload.write(this.rBytes, this.ridx,readSize);
+				this.cachePayload.write(this.rBytes, this.ridx, readSize);
 			} else {
-				this.cachePayload.write(this.rBytes, this.ridx,readSize);
+				this.cachePayload.write(this.rBytes, this.ridx, readSize);
 			}
-			this.ridx+=readSize;
+			this.ridx += readSize;
 			this.payloadIndex += readSize;
 		}
 		if (this.payloadIndex == this.payloadLength) {
@@ -172,7 +166,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			} else if (frameType == FRAME_TYPE_SETTINGS) {
 				handleSettingsFrame();
 			} else if (frameType == FRAME_TYPE_PUSH_PROMISE) {
-			//	this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+				// this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 			} else if (frameType == FRAME_TYPE_PING) {
 				handlePingFrame();
 			} else if (frameType == FRAME_TYPE_GO_AWAY) {
@@ -191,33 +185,27 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	}
 
 	private void handleGoAwayFrame() {
-		cachePayload.
-		
-		this.readCacheBytesInQueue(this.framePayload, 8);
-
-		int lastStreamId = ((frameReadBuffer[0] & 0x7f) << 24 | (frameReadBuffer[1] & 0xff) << 16 | (frameReadBuffer[2] & 0xff) << 8
-				| frameReadBuffer[3] & 0xff);
-		long errorCode = ((frameReadBuffer[4] & 0xff) << 24 | (frameReadBuffer[5] & 0xff) << 16 | (frameReadBuffer[6] & 0xff) << 8 | frameReadBuffer[7] & 0xff)
-				& 0xFFFFFFFFL;
+		byte[] buffer = cachePayload.buffer;
+		int lastStreamId = ((buffer[0] & 0x7f) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8 | buffer[3] & 0xff);
+		long errorCode = ((buffer[4] & 0xff) << 24 | (buffer[5] & 0xff) << 16 | (buffer[6] & 0xff) << 8 | buffer[7] & 0xff) & 0xFFFFFFFFL;
 		goAway(lastStreamId, errorCode);
-		this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 	}
 
 	private void handleRstStreamFrame() {
-		long errorCode = ((frameReadBuffer[0] & 0xff) << 24 | (frameReadBuffer[1] & 0xff) << 16 | (frameReadBuffer[2] & 0xff) << 8 | frameReadBuffer[3] & 0xff)
-				& 0xFFFFFFFFL;
+		byte[] buffer = cachePayload.buffer;
+		long errorCode = ((buffer[0] & 0xff) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8 | buffer[3] & 0xff) & 0xFFFFFFFFL;
 		resetStream(errorCode);
 	}
 
 	private void handleUnknownFrame() {
-		framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+
 	}
 
 	protected void handlePingFrame() {
 		if (Http2FlagsUtil.ack(frameFlag)) {
-			recvPingAck(this.frameReadBuffer);
+			recvPingAck(this.cachePayload.buffer);
 		} else {
-			writePingAck(this.frameReadBuffer);
+			writePingAck(this.cachePayload.buffer);
 		}
 	}
 
@@ -225,14 +213,13 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		if (Http2FlagsUtil.ack(frameFlag)) {
 			recvSettingAck();
 		} else {
+			byte[] buffer = cachePayload.buffer;
 			int numSettings = payloadLength / FRAME_SETTING_SETTING_ENTRY_LENGTH;
 			Http2Settings settings = new Http2Settings();
-			for (int index = 0; index < numSettings; ++index) {
-				this.readCacheBytesInQueue(this.framePayload, FRAME_SETTING_SETTING_ENTRY_LENGTH);
-
-				char id = (char) (((frameReadBuffer[0] << 8) | (frameReadBuffer[1] & 0xFF)) & 0xffff);
-				long value = 0xffffffffL & (((frameReadBuffer[2] & 0xff) << 24) | ((frameReadBuffer[3] & 0xff) << 16) | ((frameReadBuffer[4] & 0xff) << 8)
-						| (frameReadBuffer[5] & 0xff));
+			for (int index = 0, setIdx = 0; index < numSettings; ++index) {
+				char id = (char) (((buffer[setIdx++] << 8) | (buffer[setIdx++] & 0xFF)) & 0xffff);
+				long value = 0xffffffffL & (((buffer[setIdx++] & 0xff) << 24) | ((buffer[setIdx++] & 0xff) << 16) | ((buffer[setIdx++] & 0xff) << 8)
+						| (buffer[setIdx++] & 0xff));
 				try {
 					if (id == Http2Settings.SETTINGS_HEADER_TABLE_SIZE) {
 						settings.headerTableSize(value);
@@ -252,9 +239,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 					}
 					this.applySetting(settings);
 				} catch (IllegalArgumentException e) {
-					// TODO
 					this.currentState = Http2ProtocolError.ERROR_INVALID_SETTING_VALUE;
-					this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
+
 					return;
 				}
 			}
@@ -264,8 +250,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	}
 
 	protected void handlePriorityFrame() {
-		long word1 = (((this.frameReadBuffer[0] & 0xff) << 24) | ((this.frameReadBuffer[2] & 0xff) << 16) | ((this.frameReadBuffer[3] & 0xff) << 8)
-				| (this.frameReadBuffer[4] & 0xff)) & 0xFFFFFFFFL;
+		byte[] buffer = this.cachePayload.buffer;
+		long word1 = (((buffer[0] & 0xff) << 24) | ((buffer[2] & 0xff) << 16) | ((buffer[3] & 0xff) << 8) | (buffer[4] & 0xff)) & 0xFFFFFFFFL;
 
 		final boolean exclusive = (word1 & 0x80000000L) != 0;
 		final int streamDependency = (int) (word1 & 0x7FFFFFFFL);
@@ -273,15 +259,13 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			// TODO impl throw streamError(streamId, PROTOCOL_ERROR, "A stream
 			// cannot depend on itself.");
 		}
-		final short weight = (short) ((this.frameReadBuffer[4] & 0xFF) + 1);
+		final short weight = (short) ((buffer[4] & 0xFF) + 1);
 		handlePriority(streamDependency, weight, exclusive);
 	}
 
 	protected void handleWindowUpdateFrame() {
-		this.readCacheBytesInQueue(this.framePayload, 4);
-		int windowSizeIncrement = (((frameReadBuffer[0] & 0x7f) << 24) | ((frameReadBuffer[1] & 0xff) << 16) | ((frameReadBuffer[2] & 0xff) << 8)
-				| (frameReadBuffer[3] & 0xff));
-		assert this.framePayload.isEmpty();
+		byte[] buffer = this.cachePayload.buffer;
+		int windowSizeIncrement = (((buffer[0] & 0x7f) << 24) | ((buffer[1] & 0xff) << 16) | ((buffer[2] & 0xff) << 8) | (buffer[3] & 0xff));
 		if (windowSizeIncrement == 0) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_WINDOW_UPDATE;
 		}
@@ -297,42 +281,26 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	}
 
 	protected void handleDataFrame() {
+		assert this.cachePayload.ridx == 0;
 		boolean hasPadding = Http2FlagsUtil.paddingPresent(frameFlag);
-		int oldPayloadSize = payloadLength;
+
 		int padding = 0;
 		if (hasPadding) {
-			padding = this.readUByteInQueue(this.framePayload);
-			--payloadLength;
-		}
-		if (payloadLength < padding) {
-			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
-			this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
-			return;
-		}
-		if (padding != 0) {
-			int rpll = payloadLength - padding;
-			if (rpll > 0)
-				this.slicePayload(rpll, this.dataPayload);
-		} else {
-			if (payloadLength > 0) {
-				this.framePayload.offerTo(this.dataPayload);
+			padding = this.cachePayload.buffer[this.cachePayload.ridx++] & 0xFF;
+			if (payloadLength < padding) {
+				this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
+				return;
 			}
+			cachePayload.widx -= padding;
 		}
-		this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
-
-		this.recvWindowSize -= oldPayloadSize;
+		this.recvWindowSize -= payloadLength;
 		if (this.recvWindowSize < 8192) {
-			this.writeWindowUpdate(0, (this.localInitialWindowSize - recvWindowSize));
+			this.writeWindowUpdate(0, (this.localConnectionInitialWinodwSize - recvWindowSize));
 		}
-		this.handleStreamData(oldPayloadSize, Http2FlagsUtil.endOfStream(frameFlag));
-		assert this.dataPayload.isEmpty();
+		this.handleStreamData(payloadLength, Http2FlagsUtil.endOfStream(frameFlag));
 	}
 
 	protected void handleContinuationFrame() {
-		if (this.payloadLength > 0) {
-			this.cacheHeaderLength += payloadLength;
-			this.framePayload.offerTo(this.headersPayload);
-		}
 		if (Http2FlagsUtil.endOfHeaders(frameFlag)) {
 			DefaultHttpHeaders headers = this.decodeHeaders();
 			if (headers != null) {
@@ -352,32 +320,28 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	private boolean exclusiveInHeaders = false;
 	private boolean endOfStreamInHeaders = false;
 
-	private int cacheHeaderLength = 0;
-
 	protected void handleHeadersFrame() {
+		assert this.cachePayload.ridx == 0;
 		this.streamIdOfHeaders = this.streamId;
 		boolean hasPadding = Http2FlagsUtil.paddingPresent(frameFlag);
 		boolean endOfHeaders = Http2FlagsUtil.endOfHeaders(frameFlag);
 		this.endOfStreamInHeaders = Http2FlagsUtil.endOfStream(frameType);
+		byte[] buffer = this.cachePayload.buffer;
 		int padding = 0;
+
 		if (hasPadding) {
-			padding = this.readUByteInQueue(this.framePayload);
-			--payloadLength;
+			padding = buffer[this.cachePayload.ridx] & 0xFF;
+			cachePayload.widx -= padding;
 		}
 
 		if (payloadLength < padding) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
-			this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 			return;
 		}
-
 		if (Http2FlagsUtil.priorityPresent(frameFlag)) {
 			priorityInHeaders = true;
-			this.readCacheBytesInQueue(this.framePayload, 4);
-			long word1 = (((this.frameReadBuffer[0] & 0xff) << 24) | ((this.frameReadBuffer[2] & 0xff) << 16) | ((this.frameReadBuffer[3] & 0xff) << 8)
-					| (this.frameReadBuffer[4] & 0xff)) & 0xFFFFFFFFL;
-			payloadLength -= 4;
-
+			long word1 = (((buffer[this.cachePayload.ridx++] & 0xff) << 24) | ((buffer[this.cachePayload.ridx++] & 0xff) << 16)
+					| ((buffer[this.cachePayload.ridx++] & 0xff) << 8) | (buffer[this.cachePayload.ridx++] & 0xff)) & 0xFFFFFFFFL;
 			exclusiveInHeaders = (word1 & 0x80000000L) != 0;
 			streamDependency = (int) (word1 & 0x7FFFFFFFL);
 			if (streamDependency == streamId) {
@@ -385,20 +349,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 				// throw streamError(streamId, PROTOCOL_ERROR, "A stream cannot
 				// depend on itself.");
 			}
-			weightInHeaders = (short) (this.readUByteInQueue(this.framePayload) + 1);
-			--payloadLength;
-
-			if (padding != 0) {
-				this.cacheHeaderLength = payloadLength - padding;
-				if (cacheHeaderLength > 0)
-					this.slicePayload(cacheHeaderLength, this.headersPayload);
-				this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
-			} else {
-				this.cacheHeaderLength = payloadLength;
-				if (payloadLength > 0) {
-					this.framePayload.offerTo(this.headersPayload);
-				}
-			}
+			weightInHeaders = (short) ((buffer[this.cachePayload.ridx++] & 0xFF) + 1);
 			if (endOfHeaders) {
 				DefaultHttpHeaders headers = this.decodeHeaders();
 				if (headers != null) {
@@ -408,18 +359,6 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			}
 		} else {
 			priorityInHeaders = false;
-			if (padding != 0) {
-				cacheHeaderLength = payloadLength - padding;
-				if (cacheHeaderLength > 0)
-					this.slicePayload(cacheHeaderLength, this.headersPayload);
-
-				this.framePayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
-			} else {
-				cacheHeaderLength = payloadLength;
-				if (payloadLength > 0) {
-					this.framePayload.offerTo(this.headersPayload);
-				}
-			}
 			if (endOfHeaders) {
 				DefaultHttpHeaders headers = this.decodeHeaders();
 				if (headers != null) {
@@ -431,10 +370,10 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	}
 
 	private boolean doReadFrameHeader() {
-		int nr =this.widx- this.ridx;
+		int nr = this.widx - this.ridx;
 		int readSize = Integer.min(FRAME_CONFIG_HEADER_SIZE - this.frameHeaderIndex, nr);
-		System.arraycopy(this.rBytes, ridx,this.frameReadBuffer, this.frameHeaderIndex,readSize);
-		this.ridx+=readSize;
+		System.arraycopy(this.rBytes, ridx, this.frameReadBuffer, this.frameHeaderIndex, readSize);
+		this.ridx += readSize;
 		this.frameHeaderIndex += readSize;
 		if (this.frameHeaderIndex == FRAME_CONFIG_HEADER_SIZE) {
 			this.frameHeaderIndex = 0;
@@ -449,41 +388,40 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			streamId = ((frameReadBuffer[5] & 0x7f) << 24 | (frameReadBuffer[6] & 0xff) << 16 | (frameReadBuffer[7] & 0xff) << 8 | frameReadBuffer[8] & 0xff);
 
 			this.currentState = FRAME_STATE_READ_DATA;
+
 			if (frameType == FRAME_TYPE_DATA) {
-				fixLenPayload = false;
+				this.cachePayload.reset(payloadLength);
 				verifyDataFrame();
 			} else if (frameType == FRAME_TYPE_HEADERS) {
-				fixLenPayload = false;
+				this.cachePayload.reset(payloadLength);
 				verifyHeadersFrame();
 			} else if (frameType == FRAME_TYPE_PRIORITY) {
-				fixLenPayload = true;
+				this.cachePayload.reset(payloadLength);
 				verifyPriorityFrame();
 			} else if (frameType == FRAME_TYPE_RST_STREAM) {
-				fixLenPayload = true;
+				this.cachePayload.reset(payloadLength);
 				verifyRstStreamFrame();
 			} else if (frameType == FRAME_TYPE_SETTINGS) {
-				fixLenPayload = false;
+				this.cachePayload.reset(payloadLength);
 				verifySettingsFrame();
 			} else if (frameType == FRAME_TYPE_PUSH_PROMISE) {
-				fixLenPayload = false;
+				this.cachePayload.reset(payloadLength);
 				verifyPushPromiseFrame();
 			} else if (frameType == FRAME_TYPE_PING) {
-				fixLenPayload = true;
+				this.cachePayload.reset(payloadLength);
 				verifyPingFrame();
 			} else if (frameType == FRAME_TYPE_GO_AWAY) {
-				fixLenPayload = false;
+				this.cachePayload.reset(payloadLength);
 				verifyGoAwayFrame();
 			} else if (frameType == FRAME_TYPE_WINDOW_UPDATE) {
-				fixLenPayload = true;
+				this.cachePayload.reset(payloadLength);
 				verifyWindowUpdateFrame();
 			} else if (frameType == FRAME_TYPE_CONTINUATION) {
-				fixLenPayload = false;
 				verifyContinuationFrame();
+				this.cachePayload.ensureCapacity(this.cachePayload.widx + payloadLength);
 			} else {
-				fixLenPayload = false;
 				verifyUnknownFrame();
 			}
-
 			return true;
 		}
 		this.clearReadBuffer();
@@ -499,17 +437,14 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			this.currentState = Http2ProtocolError.ERROR_FRAME_NOT_ASSOCIATED_STREAM;
 			return;
 		}
-
 		if (this.streamIdOfHeaders == INVALID_STREAM_ID) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION_NOT;
 			return;
 		}
-
 		if (streamId != this.streamIdOfHeaders) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_STREAM_ID_WITH_CONTINUATION;
 			return;
 		}
-
 		if (payloadLength < 0) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
 			return;
@@ -650,84 +585,6 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	}
 
-	private short readUByteInQueue(Queue<InputBuf> queue) {
-		assert !queue.isEmpty();
-		InputBuf buf = (InputBuf) queue.unsafePeek();
-		assert buf.readable();
-		short ret = buf.readUnsignedByte();
-		if (!buf.readable()) {
-			buf.release();
-			queue.unsafeShift();
-		}
-		return ret;
-	}
-
-	public static byte readByteInQueue(Queue<InputBuf> queue) {
-		assert !queue.isEmpty();
-		InputBuf buf = (InputBuf) queue.unsafePeek();
-		assert buf.readable();
-		byte ret = buf.readByte();
-		if (!buf.readable()) {
-			buf.release();
-			queue.unsafeShift();
-		}
-		return ret;
-	}
-
-	protected void readCacheBytesInQueue(Queue<InputBuf> queue, int len) {
-		assert len <= this.frameReadBuffer.length && len > 0;
-		assert this.frameHeaderIndex == 0;
-		assert queue.isEmpty();
-		InputBuf buf = queue.unsafePeek();
-		assert buf != null;
-		assert buf.readable();
-		int ridx = 0;
-		for (;;) {
-			int rs = Integer.max(len, buf.readableBytes());
-			buf.readBytes(this.frameReadBuffer, ridx, rs);
-			len -= rs;
-			if (len != 0) {
-				queue.unsafeShift();
-				ridx += rs;
-				buf.release();
-				queue.unsafeShift();
-				buf = (InputBuf) queue.unsafePeek();
-				assert buf != null;
-				assert buf.readable();
-			} else {
-				break;
-			}
-		}
-		if (!buf.readable()) {
-			buf.release();
-			queue.unsafeShift();
-		}
-	}
-
-	private void slicePayload(int length, Queue<InputBuf> dest) {
-		for (;;) {
-			InputBuf buf = (InputBuf) this.framePayload.poll();
-			assert buf != null;
-			int nr = buf.readableBytes();
-			if (length >= nr) {
-				dest.offer(buf);
-				length -= nr;
-				if (length == 0) {
-					return;
-				}
-			} else {
-				dest.offer(buf.duplicate(length));
-				buf.release();
-				return;
-			}
-		}
-	}
-
-	protected void readerRelease() {
-		this.framePayload.free(NioAsyncChannel.RELEASE_INPUT_BUF);
-		this.headersPayload.free(NioAsyncChannel.RELEASE_INPUT_BUF);
-		this.dataPayload.free(NioAsyncChannel.RELEASE_INPUT_BUF);
-	}
 
 	private DNode keepAliveNode;
 	private long keepAliveTimeout = Long.MAX_VALUE;
@@ -755,38 +612,6 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		return this.keepAliveTimeout;
 	}
 
-	protected final void setOpRead() {
-		assert this.key != null && this.key.isValid();
-		final int interestOps = key.interestOps();
-		if ((interestOps & SelectionKey.OP_READ) == 0) {
-			key.interestOps(interestOps | SelectionKey.OP_READ);
-		}
-	}
-
-	protected final void cleanOpRead() {
-		assert this.key != null && this.key.isValid();
-		final int interestOps = key.interestOps();
-		if ((interestOps & SelectionKey.OP_READ) != 0) {
-			key.interestOps(interestOps | ~SelectionKey.OP_READ);
-		}
-	}
-
-	protected final void setOpWrite() {
-		assert this.key != null && this.key.isValid();
-		final int interestOps = key.interestOps();
-		if ((interestOps & SelectionKey.OP_WRITE) == 0) {
-			key.interestOps(interestOps | SelectionKey.OP_WRITE);
-		}
-	}
-
-	protected final void cleanOpWrite() {
-		assert this.key != null && this.key.isValid();
-		final int interestOps = key.interestOps();
-		if ((interestOps & SelectionKey.OP_WRITE) != 0) {
-			key.interestOps(interestOps | ~SelectionKey.OP_WRITE);
-		}
-	}
-
 	private DefaultHttpHeaders decodeHeaders() {
 
 		int index = 0;
@@ -799,235 +624,233 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		String name = null;
 		HpackUtil.IndexType indexType = HpackUtil.IndexType.NONE;
 		DefaultHttpHeaders headers = new DefaultHttpHeaders();
-		try {
-			while (!this.headersPayload.isEmpty()) {
-				switch (state) {
-					case READ_HEADER_REPRESENTATION:
-						byte b = readByteInQueue(this.headersPayload);
-						--cacheHeaderLength;
-						if (b < 0) {
-							/* b = (-128~ -1) */
-							index = b & 0x7F;
-							/* index =(0~127) */
-							switch (index) {
-								case 0:/* index=0 b = -128 */
-									this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-									return null;
-								case 0x7F:
-									/* index = 127 b = -1 */
-									state = READ_INDEXED_HEADER;
-									break;
-								default:
-									/* index=(1~126) b =(-127~ -2) */
-									header = indexHeader(index);
-									if (header == null) {
-										this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-										return null;
-									}
-									headers.add(header.name, header.value);
-							}
-						} else if ((b & 0x40) == 0x40) {
-							/* b = (64~127) */
-							// Literal Header Field with Incremental Indexing
-							indexType = HpackUtil.IndexType.INCREMENTAL;
-							index = b & 0x3F;
-							switch (index) {
-								case 0:
-									/* b = 64 index = 0 */
-									state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
-									break;
-								case 0x3F:
-									/* b =127 index = 63 */
-									state = READ_INDEXED_HEADER_NAME;
-									break;
-								default:
-									/* b = (65~126) index = (1~62) */
-									header = indexHeader(index);
-									if (header == null) {
-										this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-										return null;
-									}
-									name = header.name;
-									state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
-							}
-						} else if ((b & 0x20) == 0x20) {
-							/* b = 32 ~ 63 */
-							// Dynamic Table Size Update
-							index = b & 0x1F;
-							if (index == 0x1F) {/* b = 63 index == 31 */
-								state = READ_MAX_DYNAMIC_TABLE_SIZE;
-							} else {
-								/* b = 32~ 62 index = 0~ 30 */
-								this.remoteDynaTable.setCapacity(index);
-								state = READ_HEADER_REPRESENTATION;
-							}
-						} else {
-							/* b = 0 ~31 */
-							// Literal Header Field without Indexing / never
-							// Indexed
-							indexType = ((b & 0x10) == 0x10) ? HpackUtil.IndexType.NEVER : HpackUtil.IndexType.NONE;
-							index = b & 0x0F;
+		byte[] buffer = this.cachePayload.buffer;
 
-							switch (index) {
-								case 0:
-									/* index = 0 , b =(0 , 16) */
-									state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
-									break;
-								case 0x0F:
-									/* index = 15, b=(15,31) */
-									state = READ_INDEXED_HEADER_NAME;
-									break;
-								default:
-									// Index was stored as the prefix
-									/* index = (1~14) , b =(1~14 ,17~30) */
-									header = indexHeader(index);
-									if (header == null) {
-										this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-										return null;
-									}
-									name = header.name;
-									state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
-							}
-						}
-						break;
-
-					case READ_MAX_DYNAMIC_TABLE_SIZE:
-						tmpLong = decodeULE128((long) index);
-						if (tmpLong == Long.MAX_VALUE) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						this.remoteDynaTable.setCapacity(tmpLong);
-						state = READ_HEADER_REPRESENTATION;
-						break;
-					case READ_INDEXED_HEADER:
-						tmpLong = decodeULE128((long) index);
-						if (tmpLong > Integer.MAX_VALUE) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						header = indexHeader((int) tmpLong);
-						if (header == null) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						headers.add(header.name, header.value);
-						state = READ_HEADER_REPRESENTATION;
-						break;
-
-					case READ_INDEXED_HEADER_NAME:
-						// Header Name matches an entry in the Header Table
-						tmpLong = decodeULE128((long) index);
-						if (tmpLong > Integer.MAX_VALUE) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						header = indexHeader((int) tmpLong);
-						if (header == null) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						name = header.name;
-						state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
-						break;
-
-					case READ_LITERAL_HEADER_NAME_LENGTH_PREFIX:
-						b = readByteInQueue(this.headersPayload);
-						--cacheHeaderLength;
-						huffmanEncoded = (b & 0x80) == 0x80;
+		while (this.cachePayload.widx > this.cachePayload.ridx) {
+			// ! this.headersPayload.isEmpty())
+			switch (state) {
+				case READ_HEADER_REPRESENTATION:
+					byte b = buffer[this.cachePayload.ridx++];
+					if (b < 0) {
+						/* b = (-128~ -1) */
 						index = b & 0x7F;
-						if (index == 0x7f) {
-							state = READ_LITERAL_HEADER_NAME_LENGTH;
-						} else {
-							nameLen = index;
-							state = READ_LITERAL_HEADER_NAME;
-						}
-						break;
-					case READ_LITERAL_HEADER_NAME_LENGTH:
-						tmpLong = decodeULE128((long) index);
-						if (tmpLong > Integer.MAX_VALUE) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						nameLen = (int) tmpLong;
-						state = READ_LITERAL_HEADER_NAME;
-						break;
-					case READ_LITERAL_HEADER_NAME:
-						// Wait until entire name is readable
-						if (cacheHeaderLength < nameLen) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						cacheHeaderLength -= nameLen;
-						name = readStringLiteral(nameLen, huffmanEncoded);
-						if (null == name) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-
-						state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
-						break;
-
-					case READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX:
-						b = readByteInQueue(this.headersPayload);
-						--cacheHeaderLength;
-						huffmanEncoded = (b & 0x80) == 0x80;
-						index = b & 0x7F;
+						/* index =(0~127) */
 						switch (index) {
-							case 0x7f:
-								state = READ_LITERAL_HEADER_VALUE_LENGTH;
-								break;
-							case 0:
-								headers.add(name, StringUtil.EMPTY_STRING);
-								if (indexType == HpackUtil.IndexType.INCREMENTAL) {
-									remoteDynaTable.add(new HpackHeaderField(name, StringUtil.EMPTY_STRING));
-								}
-								state = READ_HEADER_REPRESENTATION;
+							case 0:/* index=0 b = -128 */
+								this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+								return null;
+							case 0x7F:
+								/* index = 127 b = -1 */
+								state = READ_INDEXED_HEADER;
 								break;
 							default:
-								valueLen = index;
-								state = READ_LITERAL_HEADER_VALUE;
+								/* index=(1~126) b =(-127~ -2) */
+								header = indexHeader(index);
+								if (header == null) {
+									this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+									return null;
+								}
+								headers.add(header.name, header.value);
 						}
-						break;
+					} else if ((b & 0x40) == 0x40) {
+						/* b = (64~127) */
+						// Literal Header Field with Incremental Indexing
+						indexType = HpackUtil.IndexType.INCREMENTAL;
+						index = b & 0x3F;
+						switch (index) {
+							case 0:
+								/* b = 64 index = 0 */
+								state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
+								break;
+							case 0x3F:
+								/* b =127 index = 63 */
+								state = READ_INDEXED_HEADER_NAME;
+								break;
+							default:
+								/* b = (65~126) index = (1~62) */
+								header = indexHeader(index);
+								if (header == null) {
+									this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+									return null;
+								}
+								name = header.name;
+								state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
+						}
+					} else if ((b & 0x20) == 0x20) {
+						/* b = 32 ~ 63 */
+						// Dynamic Table Size Update
+						index = b & 0x1F;
+						if (index == 0x1F) {/* b = 63 index == 31 */
+							state = READ_MAX_DYNAMIC_TABLE_SIZE;
+						} else {
+							/* b = 32~ 62 index = 0~ 30 */
+							this.remoteDynaTable.setCapacity(index);
+							state = READ_HEADER_REPRESENTATION;
+						}
+					} else {
+						/* b = 0 ~31 */
+						// Literal Header Field without Indexing / never
+						// Indexed
+						indexType = ((b & 0x10) == 0x10) ? HpackUtil.IndexType.NEVER : HpackUtil.IndexType.NONE;
+						index = b & 0x0F;
 
-					case READ_LITERAL_HEADER_VALUE_LENGTH:
-						// Header Value is a Literal String
-						tmpLong = decodeULE128(index);
-						if (tmpLong > Integer.MAX_VALUE) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
+						switch (index) {
+							case 0:
+								/* index = 0 , b =(0 , 16) */
+								state = READ_LITERAL_HEADER_NAME_LENGTH_PREFIX;
+								break;
+							case 0x0F:
+								/* index = 15, b=(15,31) */
+								state = READ_INDEXED_HEADER_NAME;
+								break;
+							default:
+								// Index was stored as the prefix
+								/* index = (1~14) , b =(1~14 ,17~30) */
+								header = indexHeader(index);
+								if (header == null) {
+									this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+									return null;
+								}
+								name = header.name;
+								state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
 						}
-						valueLen = (int) tmpLong;
-						state = READ_LITERAL_HEADER_VALUE;
-						break;
+					}
+					break;
 
-					case READ_LITERAL_HEADER_VALUE:
-						// Wait until entire value is readable
-						if (cacheHeaderLength < valueLen) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						cacheHeaderLength -= valueLen;
-						String value = readStringLiteral(valueLen, huffmanEncoded);
-						if (value == null) {
-							this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
-							return null;
-						}
-						headers.add(name, value);
-						if (indexType == HpackUtil.IndexType.INCREMENTAL) {
-							remoteDynaTable.add(new HpackHeaderField(name, value));
-						}
-						state = READ_HEADER_REPRESENTATION;
-						break;
+				case READ_MAX_DYNAMIC_TABLE_SIZE:
+					tmpLong = decodeULE128((long) index);
+					if (tmpLong == Long.MAX_VALUE) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					this.remoteDynaTable.setCapacity(tmpLong);
+					state = READ_HEADER_REPRESENTATION;
+					break;
+				case READ_INDEXED_HEADER:
+					tmpLong = decodeULE128((long) index);
+					if (tmpLong > Integer.MAX_VALUE) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					header = indexHeader((int) tmpLong);
+					if (header == null) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					headers.add(header.name, header.value);
+					state = READ_HEADER_REPRESENTATION;
+					break;
 
-					default:
-						throw new Error("should not reach here state: " + state);
-				}
+				case READ_INDEXED_HEADER_NAME:
+					// Header Name matches an entry in the Header Table
+					tmpLong = decodeULE128((long) index);
+					if (tmpLong > Integer.MAX_VALUE) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					header = indexHeader((int) tmpLong);
+					if (header == null) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					name = header.name;
+					state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
+					break;
+
+				case READ_LITERAL_HEADER_NAME_LENGTH_PREFIX:
+					b = buffer[this.cachePayload.ridx++]; // readByteInQueue(this.headersPayload);
+					huffmanEncoded = (b & 0x80) == 0x80;
+					index = b & 0x7F;
+					if (index == 0x7f) {
+						state = READ_LITERAL_HEADER_NAME_LENGTH;
+					} else {
+						nameLen = index;
+						state = READ_LITERAL_HEADER_NAME;
+					}
+					break;
+				case READ_LITERAL_HEADER_NAME_LENGTH:
+					tmpLong = decodeULE128((long) index);
+					if (tmpLong > Integer.MAX_VALUE) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					nameLen = (int) tmpLong;
+					state = READ_LITERAL_HEADER_NAME;
+					break;
+				case READ_LITERAL_HEADER_NAME:
+					// Wait until entire name is readable
+					if (this.cachePayload.widx - this.cachePayload.ridx < nameLen) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					this.cachePayload.ridx += nameLen;
+					name = readStringLiteral(nameLen, huffmanEncoded);
+					if (null == name) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+
+					state = READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX;
+					break;
+
+				case READ_LITERAL_HEADER_VALUE_LENGTH_PREFIX:
+					b = buffer[this.cachePayload.ridx++];
+					huffmanEncoded = (b & 0x80) == 0x80;
+					index = b & 0x7F;
+					switch (index) {
+						case 0x7f:
+							state = READ_LITERAL_HEADER_VALUE_LENGTH;
+							break;
+						case 0:
+							headers.add(name, StringUtil.EMPTY_STRING);
+							if (indexType == HpackUtil.IndexType.INCREMENTAL) {
+								remoteDynaTable.add(new HpackHeaderField(name, StringUtil.EMPTY_STRING));
+							}
+							state = READ_HEADER_REPRESENTATION;
+							break;
+						default:
+							valueLen = index;
+							state = READ_LITERAL_HEADER_VALUE;
+					}
+					break;
+
+				case READ_LITERAL_HEADER_VALUE_LENGTH:
+					// Header Value is a Literal String
+					tmpLong = decodeULE128(index);
+					if (tmpLong > Integer.MAX_VALUE) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					valueLen = (int) tmpLong;
+					state = READ_LITERAL_HEADER_VALUE;
+					break;
+
+				case READ_LITERAL_HEADER_VALUE:
+					// Wait until entire value is readable
+					if (this.cachePayload.widx - this.cachePayload.ridx < valueLen) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					this.cachePayload.ridx += valueLen;
+					String value = readStringLiteral(valueLen, huffmanEncoded);
+					if (value == null) {
+						this.currentState = Http2ProtocolError.ERROR_INVALID_CONTENT_IN_HEADER_FRAME;
+						return null;
+					}
+					headers.add(name, value);
+					if (indexType == HpackUtil.IndexType.INCREMENTAL) {
+						remoteDynaTable.add(new HpackHeaderField(name, value));
+					}
+					state = READ_HEADER_REPRESENTATION;
+					break;
+
+				default:
+					throw new Error("should not reach here state: " + state);
 			}
-		} finally {
-			this.headersPayload.clear(NioAsyncChannel.RELEASE_INPUT_BUF);
 		}
+
 		return headers;
+
 	}
 
 	private String readStringLiteral(int length, boolean huffmanEncoded) {
@@ -1036,26 +859,17 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		if (huffmanEncoded) {
 			return huffmanDecoder.decode(length);
 		}
-
-		StringBuilder sb = new StringBuilder(length);
-		while (length > 0) {
-			int len = Integer.min(length, this.frameReadBuffer.length);
-			this.readCacheBytesInQueue(this.headersPayload, len);
-			for (int i = 0; i < len; ++i) {
-				sb.append((char) this.frameReadBuffer[i]);
-			}
-			length -= len;
-		}
-		return sb.toString();
+		String ret = new String(this.cachePayload.buffer, this.cachePayload.ridx, length, StringUtil.US_ASCII);
+		this.cachePayload.ridx += length;
+		return ret;
 	}
 
 	public long decodeULE128(long result) {
 		assert result <= 0x7f && result >= 0;
 		int shift = 0;
 		final boolean resultStartedAtZero = result == 0;
-		while (!headersPayload.isEmpty()) {
-			byte b = readByteInQueue(headersPayload);
-			--cacheHeaderLength;
+		while (this.cachePayload.widx > this.cachePayload.ridx) {
+			byte b = this.cachePayload.buffer[this.cachePayload.ridx++];
 			if (shift == 56 && ((b & 0x80) != 0 || b == 0x7F && !resultStartedAtZero)) {
 				return Long.MAX_VALUE;
 			}
@@ -1104,30 +918,28 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		}
 
 		public boolean process(int length) {
+			byte[] buffer = cachePayload.buffer;
 			while (length > 0) {
-				int len = Integer.min(length, frameReadBuffer.length);
-				readCacheBytesInQueue(headersPayload, len);
-				for (int i = 0; i < len; ++i) {
-					byte value = frameReadBuffer[i];
-					current = (current << 8) | (value & 0xFF);
-					currentBits += 8;
-					symbolBits += 8;
-					do {
-						node = node.children[(current >>> (currentBits - 8)) & 0xFF];
-						currentBits -= node.bits;
-						if (node.isTerminal()) {
-							if (node.symbol == HpackUtil.HUFFMAN_EOS) {
-								node = ROOT;
-								bytes = null;
-								return false;
-							}
-							append(node.symbol);
+				byte value = buffer[cachePayload.ridx++];
+				current = (current << 8) | (value & 0xFF);
+				currentBits += 8;
+				symbolBits += 8;
+				do {
+					node = node.children[(current >>> (currentBits - 8)) & 0xFF];
+					currentBits -= node.bits;
+					if (node.isTerminal()) {
+						if (node.symbol == HpackUtil.HUFFMAN_EOS) {
 							node = ROOT;
-							symbolBits = currentBits;
+							bytes = null;
+							return false;
 						}
-					} while (currentBits >= 8);
-				}
+						append(node.symbol);
+						node = ROOT;
+						symbolBits = currentBits;
+					}
+				} while (currentBits >= 8);
 			}
+
 			return true;
 		}
 

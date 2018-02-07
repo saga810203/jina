@@ -1,6 +1,5 @@
 package org.jfw.jina.http.server;
 
-import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.http.HttpHeaders;
 
 public interface HttpRequest {

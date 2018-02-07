@@ -1,14 +1,13 @@
 package org.jfw.jina.http2.impl;
 
-import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.core.TaskCompletionHandler;
-import org.jfw.jina.core.impl.NioAsyncExecutor;
 import org.jfw.jina.http.HttpConsts;
 import org.jfw.jina.http.HttpHeaders;
 import org.jfw.jina.http.HttpResponseStatus;
 import org.jfw.jina.http.impl.DefaultHttpHeaders;
 import org.jfw.jina.http.server.HttpRequest;
 import org.jfw.jina.http.server.HttpResponse;
+import org.jfw.jina.http2.Http2AsyncExecutor;
 import org.jfw.jina.http2.Http2ProtocolError;
 import org.jfw.jina.http2.Http2Stream;
 import org.jfw.jina.http2.impl.Http2FrameWriter.Frame;
@@ -33,9 +32,9 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 
 	protected DNode nodeRef;
 
-	protected final Http2ServerConnection connection;
+	protected final Http2ServerConnection<? extends Http2AsyncExecutor> connection;
 
-	public ServerHttp2Stream(Http2ServerConnection connection, int windowSize) {
+	public ServerHttp2Stream(Http2ServerConnection<? extends Http2AsyncExecutor> connection, int windowSize) {
 		this.connection = connection;
 		this.initWindowSize = windowSize;
 	}
@@ -89,10 +88,7 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 	public void abort() {
 		if (this.state == Http2Stream.STREAM_STATE_OPEN) {
 			this.resState = HttpResponse.STATE_SENDED;
-			connection.writeRstStream(this.id, Http2ProtocolError.INTERNAL_ERROR);
-			this.state = Http2Stream.STREAM_STATE_CLOSED;
-			connection.removeStream(this);
-			this.reset();
+			connection.resetStream(this,Http2ProtocolError.INTERNAL_ERROR);
 		}
 	}
 
@@ -182,10 +178,7 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 	public void fail() {
 		if (this.resState != HttpResponse.STATE_SENDED) {
 			this.resState = HttpResponse.STATE_SENDED;
-			connection.writeRstStream(this.id, Http2ProtocolError.INTERNAL_ERROR);
-			this.state = Http2Stream.STREAM_STATE_CLOSED;
-			connection.removeStream(this);
-			this.reset();
+			connection.resetStream(this, Http2ProtocolError.INTERNAL_ERROR);
 		}
 	}
 
@@ -201,57 +194,9 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 		this.unsafeFlush(content, 0, cl);
 	}
 
-	public void reset() {
-		this.suspendRead = false;
-		this.method = null;
-		this.path = null;
-		this.queryString = null;
-		this.hash = null;
-		this.headers = null;
-		this.requestExecutor = null;
-	    this.state =Http2Stream.STREAM_STATE_CLOSED;
-		while (first != null) {
-			InputBuf in = first.buffer;
-			TaskCompletionHandler lis = first.listenner;
-			in.release();
-			first.buffer = null;
-			first.listenner = null;
-			if (lis != null) {
-				NioAsyncExecutor.safeInvokeFailed(lis, connection.lastWriteException, connection.executor);
-			}
-			first = first.next;
-		}
-		last = null;
-	}
 
-	public void windowUpdate(int size) {
-		int nsw = this.sendWindowSize + size;
-		// IGNORE size error
-		if (nsw < Integer.MAX_VALUE) {
-			this.sendWindowSize = Integer.MAX_VALUE;
-		} else {
-			this.sendWindowSize = nsw;
-		}
-		Frame frame = null;
-		while (first != null) {
-			nsw = this.sendWindowSize - first.length;
-			if (this.sendWindowSize >= first.length) {
-				this.sendWindowSize -= first.length;
-				frame = first;
-				first = frame.next;
-				frame.next = null;
-				connection.writeDataFrame(frame);
-				this.sendWindowSize = nsw;
-			} else {
-				return;
-			}
-		}
-		this.last = null;
-		if (this.resState == HttpResponse.STATE_SENDED) {
-			this.state = Http2Stream.STREAM_STATE_CLOSED;
-			connection.removeStream(this);
-		}
-	}
+
+	
 
 	@Override
 	public void changeInitialWindwSize(int size) {

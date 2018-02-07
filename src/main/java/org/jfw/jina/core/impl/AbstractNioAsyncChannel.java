@@ -6,7 +6,6 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
-import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.util.TagQueue;
@@ -332,7 +331,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			}
 			outputCache.unsafeShift();
 			if (task != null) {
-				NioAsyncExecutor.safeInvokeCompleted(task, (AsyncExecutor) executor);
+				executor.safeInvokeCompleted(task);
 			}
 		}
 		this.cleanOpWrite();

@@ -1,6 +1,5 @@
 package org.jfw.jina.http2.impl;
 
-import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 import org.jfw.jina.http2.Http2AsyncExecutor;
@@ -8,7 +7,7 @@ import org.jfw.jina.http2.Http2Settings;
 import org.jfw.jina.http2.Http2Stream;
 import org.jfw.jina.util.DQueue;
 
-public abstract class Http2ConnectionImpl<T extends Http2Stream> extends Http2FrameWriter {
+public abstract class Http2ConnectionImpl<T extends Http2Stream,H extends Http2AsyncExecutor> extends Http2FrameWriter<H> {
 
 	protected DQueue<T>[] streams;
 
@@ -16,8 +15,8 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream> extends Http2Fr
 
 
 	@SuppressWarnings("unchecked")
-	public Http2ConnectionImpl(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key, Http2Settings settings, int streamHashNum) {
-		super(executor, javaChannel, key);
+	public Http2ConnectionImpl(H executor, SocketChannel javaChannel,Http2Settings settings, int streamHashNum) {
+		super(executor, javaChannel);
 		assert streamHashNum == 1 || streamHashNum == 3 || streamHashNum == 7 || streamHashNum == 15 || streamHashNum == 31 || streamHashNum == 63|| streamHashNum == 127;
 		this.streamHashNum = streamHashNum;
 		this.streams = (DQueue<T>[]) new Object[streamHashNum + 1];
@@ -26,8 +25,8 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream> extends Http2Fr
 		}
 	}
 
-	public Http2ConnectionImpl(Http2AsyncExecutor executor, SocketChannel javaChannel, SelectionKey key, Http2Settings settings) {
-		this(executor, javaChannel, key, settings, 31);
+	public Http2ConnectionImpl(H executor, SocketChannel javaChannel,Http2Settings settings) {
+		this(executor, javaChannel, settings, 31);
 	}
 
 
