@@ -8,7 +8,6 @@ import org.jfw.jina.http.impl.DefaultHttpHeaders;
 import org.jfw.jina.http.server.HttpRequest;
 import org.jfw.jina.http.server.HttpResponse;
 import org.jfw.jina.http2.Http2AsyncExecutor;
-import org.jfw.jina.http2.Http2ProtocolError;
 import org.jfw.jina.http2.Http2Stream;
 import org.jfw.jina.http2.impl.Http2FrameWriter.Frame;
 import org.jfw.jina.util.DQueue.DNode;
@@ -88,7 +87,7 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 	public void abort() {
 		if (this.state == Http2Stream.STREAM_STATE_OPEN) {
 			this.resState = HttpResponse.STATE_SENDED;
-			connection.resetStream(this,Http2ProtocolError.INTERNAL_ERROR);
+			connection.streamReset(this);
 		}
 	}
 
@@ -178,7 +177,7 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 	public void fail() {
 		if (this.resState != HttpResponse.STATE_SENDED) {
 			this.resState = HttpResponse.STATE_SENDED;
-			connection.resetStream(this, Http2ProtocolError.INTERNAL_ERROR);
+			connection.streamReset(this);
 		}
 	}
 
@@ -193,15 +192,13 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 		this.unsafeContentLength(cl);
 		this.unsafeFlush(content, 0, cl);
 	}
-
-
-
-	
-
 	@Override
 	public void changeInitialWindwSize(int size) {
-		// TODO Auto-generated method stub
-
+	    int oldsize = this.sendWindowSize;  
+		this.sendWindowSize+=size;
+		if(this.sendWindowSize>oldsize && resState> HttpResponse.STATE_INIT){
+			connection.streamWindowUpdateChange(this);
+		}
 	}
 
 	@Override

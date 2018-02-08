@@ -1179,6 +1179,10 @@ public class QueueProviderImpl implements QueueProvider {
 			this.tag = null;
 			this.next = null;
 		}
+		@Override
+		public boolean inQueue() {
+			return this.tag!=null;
+		}
 
 		@Override
 		public void enqueue(DQueue dest) {

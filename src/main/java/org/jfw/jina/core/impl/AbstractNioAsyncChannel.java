@@ -558,7 +558,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		@Override
 		public void process(ByteBuffer item, TaskCompletionHandler tag) {
 			if (tag != null) {
-				((TaskCompletionHandler) tag).failed(writeException, executor);
+				executor.safeInvokeFailed(tag,writeException);
 			}
 		}
 	};

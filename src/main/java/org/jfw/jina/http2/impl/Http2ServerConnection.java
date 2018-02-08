@@ -18,6 +18,7 @@ import org.jfw.jina.http2.Http2ProtocolError;
 import org.jfw.jina.http2.Http2Settings;
 import org.jfw.jina.http2.Http2Stream;
 import org.jfw.jina.http2.Http2StreamError;
+import org.jfw.jina.util.DQueue;
 import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.Matcher;
 import org.jfw.jina.util.Queue;
@@ -61,7 +62,6 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			stream.suspendRead = false;
 		}
 		if (endOfStream) {
-			stream.state = Http2Stream.STREAM_STATE_CLOSED_REMOTE;
 			this.requestInvoke(stream);
 		} else {
 			if (!stream.suspendRead) {
@@ -273,28 +273,6 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 		}
 	}
 
-	private void resetAllOpenedStream(final int errorCode) {
-		Queue<ServerHttp2Stream> list = executor.newQueue();
-		for (int i = 0; i < this.streams.length; ++i) {
-			this.streams[i].find(new Matcher<ServerHttp2Stream>() {
-				@Override
-				public boolean match(ServerHttp2Stream item) {
-					list.offer(item);
-					return false;
-				}
-			});
-		}
-		list.free(new Handler<ServerHttp2Stream>() {
-			@Override
-			public void process(ServerHttp2Stream item) {
-				if (item.state == Http2Stream.STREAM_STATE_OPEN) {
-					safeInvokeRequestError(item, errorCode);
-				}
-				resetStream(item, errorCode);
-			}
-		});
-	}
-
 	void safeInvokeRequestError(ServerHttp2Stream stream, int errorCode) {
 		try {
 			stream.requestExecutor.error(stream, errorCode);
@@ -326,10 +304,10 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 		stream.last = null;
 	}
 
-	public void resetStream(ServerHttp2Stream stream, int errorCode) {
+	public void streamReset(ServerHttp2Stream stream) {
 		if (stream.state != Http2Stream.STREAM_STATE_CLOSED) {
-			this.writeRstStream(stream.id, errorCode);
 			stream.state = Http2Stream.STREAM_STATE_CLOSED;
+			this.writeRstStream(stream.id, Http2ProtocolError.INTERNAL_ERROR);
 			streamCleanCacheData(stream);
 			removeStream(stream);
 		}
@@ -345,81 +323,119 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 		stream.requestExecutor = null;
 	}
 
-	@Override
-	public void goAway(int lastStreamId, long errorCode) {
-		if (!goAwayed) {
-			this.writeGoAway(this.lastCreatedStream == null ? 0 : this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
-			this.goAwayed = true;
-		}
-		if (errorCode == 0) {
-			resetAllOpenedStream(400);
-		} else {
-            
-		}
-
-	}
-
-	private void resetAllStream(final int errorCode) {
+	public Queue<ServerHttp2Stream> openedStream() {
 		Queue<ServerHttp2Stream> list = executor.newQueue();
 		for (int i = 0; i < this.streams.length; ++i) {
 			this.streams[i].find(new Matcher<ServerHttp2Stream>() {
 				@Override
 				public boolean match(ServerHttp2Stream item) {
-					list.offer(item);
+					if (item.state == Http2Stream.STREAM_STATE_OPEN)
+						list.offer(item);
 					return false;
 				}
 			});
 		}
+		return list;
+	}
+
+	@Override
+	public void goAway(int lastStreamId, final long errorCode) {
+		if (!goAwayed) {
+			this.goAwayed = true;
+		}
+		Queue<ServerHttp2Stream> list = openedStream();
+		list.find(new Matcher<ServerHttp2Stream>() {
+			@Override
+			public boolean match(ServerHttp2Stream item) {
+				writeRstStream(item.id, errorCode);
+				return false;
+			}
+		});
 		list.free(new Handler<ServerHttp2Stream>() {
+
 			@Override
 			public void process(ServerHttp2Stream item) {
-				writeRstStream(item.id, errorCode);
-				if (item.state == Http2Stream.STREAM_STATE_OPEN) {
-					safeInvokeRequestError(item, 484);
-				} else {
-
-				}
+				item.state = Http2Stream.STREAM_STATE_CLOSED;
+				streamCleanCacheData(item);
 				removeStream(item);
 			}
 		});
 	}
 
+	// private void resetAllStream(final int errorCode) {
+	// Queue<ServerHttp2Stream> list = executor.newQueue();
+	// for (int i = 0; i < this.streams.length; ++i) {
+	// this.streams[i].find(new Matcher<ServerHttp2Stream>() {
+	// @Override
+	// public boolean match(ServerHttp2Stream item) {
+	// list.offer(item);
+	// return false;
+	// }
+	// });
+	// }
+	// list.free(new Handler<ServerHttp2Stream>() {
+	// @Override
+	// public void process(ServerHttp2Stream item) {
+	// writeRstStream(item.id, errorCode);
+	// if (item.state == Http2Stream.STREAM_STATE_OPEN) {
+	// safeInvokeRequestError(item, 484);
+	// } else {
+	//
+	// }
+	// removeStream(item);
+	// }
+	// });
+	// }
+
 	@Override
 	public void streamWindowUpdate(int size) {
 		ServerHttp2Stream stream = stream(this.streamId);
 		if (stream != null) {
-			int nsw = stream.sendWindowSize + size;
-			// IGNORE size error
-			if (nsw < Integer.MAX_VALUE) {
-				this.sendWindowSize = Integer.MAX_VALUE;
+			if (stream.sendWindowSize < 0) {
+				stream.sendWindowSize += size;
 			} else {
-				this.sendWindowSize = nsw;
-			}
-			Frame frame = null;
-			while (stream.first != null) {
-				nsw = stream.sendWindowSize - stream.first.length;
-				if (nsw >= 0) {
-					stream.sendWindowSize = nsw;
-					frame = stream.first;
-					stream.first = frame.next;
-					frame.next = null;
-					writeDataFrame(frame);
-				} else {
-					return;
+				stream.sendWindowSize += size;
+				if (stream.sendWindowSize < 0) {
+					stream.sendWindowSize = Integer.MAX_VALUE;
 				}
 			}
-			stream.last = null;
-			if (stream.resState == HttpResponse.STATE_SENDED) {
-				stream.state = Http2Stream.STREAM_STATE_CLOSED;
-				removeStream(stream);
+			if(stream.resState > HttpResponse.STATE_INIT){
+				streamWindowUpdateChange(stream);
 			}
 		}
 	}
+	
+	protected void streamWindowUpdateChange(ServerHttp2Stream stream){
+		Frame frame = null;
+		while (stream.first != null) {
+			int nsw = stream.sendWindowSize - stream.first.length;
+			if (nsw >= 0) {
+				stream.sendWindowSize = nsw;
+				frame = stream.first;
+				stream.first = frame.next;
+				frame.next = null;
+				writeDataFrame(frame);
+			} else {
+				return;
+			}
+		}
+		stream.last = null;
+		if (stream.resState == HttpResponse.STATE_SENDED) {
+			stream.state = Http2Stream.STREAM_STATE_CLOSED;
+			removeStream(stream);
+		}
+	}
+	
+
+
 
 	@Override
 	public void handleStreamData(int size, boolean endOfStream) {
 		ServerHttp2Stream stream = stream(this.streamId);
 		if (stream != null && stream.state == Http2Stream.STREAM_STATE_OPEN) {
+			if (endOfStream) {
+				stream.state = Http2Stream.STREAM_STATE_CLOSED_REMOTE;
+			}
 			this.requestBodyRead(stream, size, endOfStream);
 		}
 	}
@@ -622,14 +638,28 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 
 	@Override
 	public void handlePriority(int streamDependency, short weight, boolean exclusive) {
-		// TODO Auto-generated method stub
-
 	}
 
 	@Override
 	public void close() {
-		// TODO Auto-generated method stub
-
+		this.removeKeepAliveCheck();
+		this.executor.freeDNode(this.keepAliveNode);
+		this.keepAliveNode = null;
+		this.closeJavaChannel();
+		this.closeWriter();
+		DQueue<ServerHttp2Stream> list = executor.newDQueue();
+		for (int i = 0; i < this.streams.length; ++i) {
+			this.streams[i].offerToDQueue(list);
+		}
+		list.free(new Handler<ServerHttp2Stream>() {
+			@Override
+			public void process(ServerHttp2Stream item) {
+				item.state = Http2Stream.STREAM_STATE_CLOSED;
+				streamCleanCacheData(item);
+				item.nodeRef = null;
+				freeStream(item);
+			}
+		});
 	}
 
 	@Override
@@ -639,26 +669,46 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 
 	@Override
 	protected void handleInputClose() {
-		this.resetAllOpenedStream(0);
-		if (!goAwayed) {
-			this.writeGoAway(this.lastCreatedStream == null ? 0 : this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
-			this.goAwayed = true;
-		}
+		this.handleProtocolError();
 	}
 
 	@Override
 	public void keepAliveTimeout() {
-		// TODO Auto-generated method stub
-
+		this.removeKeepAliveCheck();
+		if(!goAwayed){
+			if(lastFrame==null && dataLast == null && activeStreams ==0){
+				this.goAwayed = true;				
+				this.writeGoAway(nextStreamId==1?0:(nextStreamId-2),0,executor.ouputCalcBuffer,0,0);
+				this.writeCloseFrame();
+			}else{
+				this.addKeepAliveCheck();
+				this.setOpRead();
+			}
+		}
 	}
 
 	@Override
 	protected void handleProtocolError() {
-		this.resetAllOpenedStream(0);
 		if (!goAwayed) {
-			this.writeGoAway(this.lastCreatedStream == null ? 0 : this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
 			this.goAwayed = true;
 		}
+		Queue<ServerHttp2Stream> list = openedStream();
+		list.find(new Matcher<ServerHttp2Stream>() {
+			@Override
+			public boolean match(ServerHttp2Stream item) {
+				writeRstStream(item.id, Http2ProtocolError.PROTOCOL_ERROR);
+				return false;
+			}
+		});
+		this.writeGoAway(this.lastCreatedStream == null ? 0 : this.lastCreatedStream.id, 0, executor.ouputCalcBuffer, 0, 0);
+		list.free(new Handler<ServerHttp2Stream>() {
+			@Override
+			public void process(ServerHttp2Stream item) {
+				item.state = Http2Stream.STREAM_STATE_CLOSED;
+				streamCleanCacheData(item);
+				removeStream(item);
+			}
+		});
 	}
 
 	@Override
@@ -694,6 +744,5 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 		@Override
 		public void error(HttpRequest request, int code) {
 		}
-
 	}
 }

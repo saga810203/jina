@@ -147,12 +147,9 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 
 	@Override
 	public void close() {
-		if (this.keepAliveTimeout != Long.MAX_VALUE) {
-			this.keepAliveTimeout = Long.MAX_VALUE;
-			this.keepAliveNode.dequeue();
-			this.executor.freeDNode(this.keepAliveNode);
-			this.keepAliveNode = null;
-		}
+		this.removeKeepAliveCheck();
+		this.executor.freeDNode(this.keepAliveNode);
+		this.keepAliveNode = null;
 		this.closeJavaChannel();
 	}
 

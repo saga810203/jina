@@ -8,5 +8,6 @@ public interface DQueue<I> extends Queue<I>{
 	public interface DNode extends Node{
 		void dequeue();
 		<I> void enqueue(DQueue<I> dqueue);
+		boolean inQueue();
 	}
 }

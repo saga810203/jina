@@ -35,11 +35,11 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	// private int cacheCapacity;
 	// private int cacheIndex;
 
-	private Frame first;
-	private Frame last;
+	protected Frame firstFrame;
+	protected Frame lastFrame;
 
-	private Frame dataFirst;
-	private Frame dataLast;
+	protected Frame dataFirst;
+	protected Frame dataLast;
 
 	protected Throwable lastWriteException;
 
@@ -61,12 +61,12 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	// }
 
 	protected void writeFrame(Frame frame) {
-		if (last == null) {
-			first = last = frame;
+		if (lastFrame == null) {
+			firstFrame = lastFrame = frame;
 			this.setOpWrite();
 		} else {
-			last.next = frame;
-			last = frame;
+			lastFrame.next = frame;
+			lastFrame = frame;
 		}
 	}
 
@@ -240,18 +240,18 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	@Override
 	public void writePingAck(byte[] buffer) {
 		Frame frame = buildPingFrame(buffer, true);
-		Frame prev = this.first;
+		Frame prev = this.firstFrame;
 		Frame next = null;
 		if (prev == null) {
-			this.first = frame;
-			this.last = frame;
+			this.firstFrame = frame;
+			this.lastFrame = frame;
 			return;
 		}
 		for (;;) {
 			next = prev.next;
 			if (next == null) {
 				prev.next = frame;
-				last = frame;
+				lastFrame = frame;
 				return;
 			}
 			if (next.type == FRAME_TYPE_CONTINUATION) {
@@ -333,6 +333,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		Frame frame = null;
 		for (;;) {
 			if (dataFirst == null) {
+				dataLast = null;
 				return;
 			}
 			int dlen = dataFirst.length;
@@ -369,7 +370,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	protected void closeWriter() {
 
 		dataLast = null;
-		last = null;
+		lastFrame = null;
 		Frame frame;
 		while (dataFirst != null) {
 			TaskCompletionHandler listenner = dataFirst.listenner;
@@ -377,16 +378,17 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			dataFirst = frame.next;
 			freeFrame(frame);
 			if (listenner != null) {
-				listenner.failed(this.lastWriteException, executor);
+				executor.safeInvokeFailed(listenner,this.writeException);
+
 			}
 		}
-		while (first != null) {
-			TaskCompletionHandler listenner = first.listenner;
-			frame = first;
-			first = frame.next;
+		while (firstFrame != null) {
+			TaskCompletionHandler listenner = firstFrame.listenner;
+			frame = firstFrame;
+			firstFrame = frame.next;
 			freeFrame(frame);
 			if (listenner != null) {
-				listenner.failed(this.lastWriteException, executor);
+				executor.safeInvokeFailed(listenner,this.writeException);
 			}
 		}
 	}
@@ -394,9 +396,9 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	@Override
 	public void write() {
 		Frame frame;
-		while (first != null) {
-			ByteBuffer buf = first.buffer;
-			TaskCompletionHandler listenner = first.listenner;
+		while (firstFrame != null) {
+			ByteBuffer buf = firstFrame.buffer;
+			TaskCompletionHandler listenner = firstFrame.listenner;
 			try {
 				this.javaChannel.write(buf);
 			} catch (Throwable e) {
@@ -407,13 +409,14 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			if (buf.hasRemaining()) {
 				return;
 			}
-			frame = first;
-			first = frame.next;
+			frame = firstFrame;
+			firstFrame = frame.next;
 			freeFrame(frame);
 			if (listenner != null) {
 				executor.safeInvokeCompleted(frame.listenner);
 			}
 		}
+		lastFrame = null;
 		this.cleanOpWrite();
 	}
 
@@ -424,12 +427,14 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		frame.listenner = new TaskCompletionHandler() {
 			@Override
 			public void failed(Throwable exc, AsyncExecutor executor) {
+				close();
 			}
 			@Override
 			public void completed(AsyncExecutor executor) {
 				close();
 			}
 		};
+		this.writeFrame(frame);
 	}
 
 	protected Frame newFrame() {

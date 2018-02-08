@@ -103,9 +103,6 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	protected abstract void handleInputClose();
 
-	@Override
-	public abstract void keepAliveTimeout();
-
 	protected abstract void handleProtocolError();
 
 	protected void handleRead(int len) {
@@ -586,8 +583,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	}
 
 
-	private DNode keepAliveNode;
-	private long keepAliveTimeout = Long.MAX_VALUE;
+	protected DNode keepAliveNode;
+	protected long keepAliveTimeout = Long.MAX_VALUE;
 
 	public boolean removeKeepAliveCheck() {
 		if (this.keepAliveTimeout != Long.MAX_VALUE) {

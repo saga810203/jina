@@ -50,19 +50,18 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 	private final Matcher<KeepAliveCheck> keepAliveCheckHandler = new Matcher<KeepAliveCheck>() {
 		@Override
 		public boolean match(KeepAliveCheck item) {
-
 			if (System.currentTimeMillis() - item.getKeepAliveTime() > keepAliveTimeout) {
 				item.keepAliveTimeout();
-				return true;
+				return false;
 			}
-			return false;
+			return true;
 		}
 	};
 
 	private AsyncTask keepAliveCheckTask = new AsyncTaskAdapter() {
 		@Override
 		public void execute(AsyncExecutor executor) throws Throwable {
-			keepAliveQueue.remove(keepAliveCheckHandler);
+			keepAliveQueue.find(keepAliveCheckHandler);
 		}
 
 		@Override

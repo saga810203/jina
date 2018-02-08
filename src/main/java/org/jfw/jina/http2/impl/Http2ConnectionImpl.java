@@ -6,18 +6,19 @@ import org.jfw.jina.http2.Http2AsyncExecutor;
 import org.jfw.jina.http2.Http2Settings;
 import org.jfw.jina.http2.Http2Stream;
 import org.jfw.jina.util.DQueue;
+import org.jfw.jina.util.Matcher;
 
-public abstract class Http2ConnectionImpl<T extends Http2Stream,H extends Http2AsyncExecutor> extends Http2FrameWriter<H> {
+public abstract class Http2ConnectionImpl<T extends Http2Stream, H extends Http2AsyncExecutor> extends Http2FrameWriter<H> {
 
 	protected DQueue<T>[] streams;
 
 	protected int streamHashNum;
 
-
 	@SuppressWarnings("unchecked")
-	public Http2ConnectionImpl(H executor, SocketChannel javaChannel,Http2Settings settings, int streamHashNum) {
+	public Http2ConnectionImpl(H executor, SocketChannel javaChannel, Http2Settings settings, int streamHashNum) {
 		super(executor, javaChannel);
-		assert streamHashNum == 1 || streamHashNum == 3 || streamHashNum == 7 || streamHashNum == 15 || streamHashNum == 31 || streamHashNum == 63|| streamHashNum == 127;
+		assert streamHashNum == 1 || streamHashNum == 3 || streamHashNum == 7 || streamHashNum == 15 || streamHashNum == 31 || streamHashNum == 63
+				|| streamHashNum == 127;
 		this.streamHashNum = streamHashNum;
 		this.streams = (DQueue<T>[]) new Object[streamHashNum + 1];
 		for (int i = 0; i <= streamHashNum; ++i) {
@@ -25,10 +26,9 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream,H extends Http2A
 		}
 	}
 
-	public Http2ConnectionImpl(H executor, SocketChannel javaChannel,Http2Settings settings) {
+	public Http2ConnectionImpl(H executor, SocketChannel javaChannel, Http2Settings settings) {
 		this(executor, javaChannel, settings, 31);
 	}
-
 
 	public abstract T stream(int id);
 
@@ -57,9 +57,6 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream,H extends Http2A
 		}
 	}
 
-
-
-
 	@Override
 	public void applySetting(Http2Settings settings) {
 		// Boolean b = settings.pushEnabled();
@@ -78,7 +75,16 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream,H extends Http2A
 		}
 		Integer iv = settings.initialWindowSize();
 		if (iv != null) {
-			// TODO:
+			final int decSize = iv - this.remoteInitialWindowSize;
+			for (int i = 0; i < this.streams.length; ++i) {
+				this.streams[i].find(new Matcher<T>() {
+					@Override
+					public boolean match(T item) {
+						item.changeInitialWindwSize(decSize);
+						return false;
+					}
+				});
+			}
 			this.remoteInitialWindowSize = iv;
 		}
 		iv = settings.maxFrameSize();
@@ -87,15 +93,11 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream,H extends Http2A
 		}
 		lv = settings.maxHeaderListSize();
 		if (lv != null) {
-			if(this.maxHeaderListSize!=Long.MAX_VALUE){
+			if (this.maxHeaderListSize != Long.MAX_VALUE) {
 				this.maxHeaderListSize = lv.longValue();
 			}
 		}
 
 	}
-
-
-	
-
 
 }
