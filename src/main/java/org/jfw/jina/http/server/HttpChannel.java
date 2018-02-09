@@ -94,14 +94,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			this.setOpRead();
 		} else {
 			this.cleanOpRead();
-			// TagNode node = inputCache.peekTagNode();
-			// InputBuf buf = (InputBuf)node.item();
-			// int len = ((Integer)node.tag()).intValue();
-			// if(!buf.readable()){
-			//
-			// } 可能存在两个调用周期才会 setOpRead();
-
-			// 延迟处理防止调用栈太长，完合遵守HTTP1.1不会出现这种问题
 			executor.submit(handReadDelay);
 		}
 

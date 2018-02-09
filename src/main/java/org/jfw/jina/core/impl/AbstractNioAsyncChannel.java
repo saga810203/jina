@@ -17,9 +17,9 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 	protected T executor;
 	protected SocketChannel javaChannel;
-	protected SelectionKey key;
-	protected final TagQueue<ByteBuffer, TaskCompletionHandler> outputCache;
-	protected ByteBuffer cacheBuffer;
+	private SelectionKey key;
+	private final TagQueue<ByteBuffer, TaskCompletionHandler> outputCache;
+	private ByteBuffer cacheBuffer;
 	protected Throwable writeException;
 	protected int ridx;
 	protected int widx;
@@ -141,7 +141,6 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			this.widx += rc;
 			this.handleRead(this.widx - this.ridx);
 			return;
-
 		} else {
 			int len = this.widx - this.ridx;
 			if (len > 0) {
@@ -195,72 +194,37 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		assert index >= 0;
 		assert len > 0;
 		assert buf.length >= (index + len);
-		if (this.javaChannel != null) {
-			if (null == this.cacheBuffer) {
-				this.cacheBuffer = ByteBuffer.allocate(8192);
-			} else {
-				if (!cacheBuffer.hasRemaining()) {
-					cacheBuffer.flip();
-					this.outputCache.offer(cacheBuffer);
-					cacheBuffer = ByteBuffer.allocate(8192);
-				}
+		if (null == this.cacheBuffer) {
+			this.cacheBuffer = ByteBuffer.allocate(8192);
+		} else {
+			if (!cacheBuffer.hasRemaining()) {
+				cacheBuffer.flip();
+				this.write(this.cacheBuffer);
+				cacheBuffer = ByteBuffer.allocate(8192);
 			}
-			while (len > 0) {
-				int wl = Integer.min(cacheBuffer.remaining(), len);
-				len -= wl;
-				if (len > 0) {
-					cacheBuffer.flip();
-					outputCache.offer(cacheBuffer);
-					cacheBuffer = ByteBuffer.allocate(8192);
-				}
+		}
+		while (len > 0) {
+			int wl = Integer.min(cacheBuffer.remaining(), len);
+			len -= wl;
+			if (len > 0) {
+				cacheBuffer.flip();
+				this.write(this.cacheBuffer);
+				cacheBuffer = ByteBuffer.allocate(8192);
 			}
 		}
 	}
-//	
-//	protected void writeData(byte[] buf, int index, int len,TaskCompletionHandler task) {
-//		assert buf != null;
-//		assert index >= 0;
-//		assert len > 0;
-//		assert buf.length >= (index + len);
-//		if (this.javaChannel != null) {
-//			if (null == this.cacheBuffer) {
-//				this.cacheBuffer = ByteBuffer.allocate(8192);
-//			} else {
-//				if (!cacheBuffer.hasRemaining()) {
-//					cacheBuffer.flip();
-//					this.outputCache.offer(cacheBuffer);
-//					cacheBuffer = ByteBuffer.allocate(8192);
-//				}
-//			}
-//			while (len > 0) {
-//				int wl = Integer.min(cacheBuffer.remaining(), len);
-//				len -= wl;
-//				if (len > 0) {
-//					cacheBuffer.flip();
-//					outputCache.offer(cacheBuffer);
-//					cacheBuffer = ByteBuffer.allocate(8192);
-//				}
-//			}
-//			this.cacheBuffer.flip();
-//			this.outputCache.offer(cacheBuffer,task);
-//			this.cacheBuffer = null;
-//			this.setOpWrite();
-//		}
-//	}
 
 	protected void writeByteData(byte value) {
-		if (this.javaChannel != null) {
-			if (null == this.cacheBuffer) {
-				this.cacheBuffer = ByteBuffer.allocate(8192);
-			} else {
-				if (!cacheBuffer.hasRemaining()) {
-					cacheBuffer.flip();
-					this.outputCache.offer(cacheBuffer);
-					cacheBuffer = ByteBuffer.allocate(8192);
-				}
+		if (null == this.cacheBuffer) {
+			this.cacheBuffer = ByteBuffer.allocate(8192);
+		} else {
+			if (!cacheBuffer.hasRemaining()) {
+				cacheBuffer.flip();
+				this.write(this.cacheBuffer);
+				cacheBuffer = ByteBuffer.allocate(8192);
 			}
-			this.cacheBuffer.put(value);
 		}
+		this.cacheBuffer.put(value);
 	}
 
 	protected void flushData(byte[] buf, int index, int len, TaskCompletionHandler task) {
@@ -274,7 +238,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			} else {
 				if (!cacheBuffer.hasRemaining()) {
 					cacheBuffer.flip();
-					this.outputCache.offer(cacheBuffer);
+					this.write(cacheBuffer);
 					cacheBuffer = ByteBuffer.allocate(8192);
 				}
 			}
@@ -283,14 +247,13 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 				len -= wl;
 				if (len > 0) {
 					cacheBuffer.flip();
-					outputCache.offer(cacheBuffer);
+					this.write(cacheBuffer);
 					cacheBuffer = ByteBuffer.allocate(8192);
 				}
 			}
 			this.cacheBuffer.flip();
-			this.outputCache.offer(this.cacheBuffer, task);
+			this.write(this.cacheBuffer, task);
 			this.cacheBuffer = null;
-			this.setOpWrite();
 		} else {
 			task.failed(this.writeException, executor);
 		}
@@ -308,6 +271,65 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			}
 			this.setOpWrite();
 		}
+	}
+
+	protected boolean write(ByteBuffer buffer) {
+		if (this.writeException == null) {
+			if (outputCache.isEmpty()) {
+				if (buffer.hasRemaining()) {
+					try {
+						this.javaChannel.write(buffer);
+					} catch (IOException e) {
+						this.writeException = e;
+						this.close();
+						return true;
+					}
+					if (buffer.hasRemaining()) {
+						outputCache.offer(buffer);
+						this.setOpWrite();
+						return false;
+					}else{
+						return true;
+					}
+				}
+			} else {
+				outputCache.offer(buffer);
+				return false;
+			}
+		}
+		return true;
+	}
+
+	protected boolean write(ByteBuffer buffer, TaskCompletionHandler task) {
+		if (this.writeException == null) {
+			if (outputCache.isEmpty()) {
+				if (buffer.hasRemaining()) {
+					try {
+						this.javaChannel.write(buffer);
+					} catch (IOException e) {
+						this.writeException = e;
+						executor.safeInvokeFailed(task, e);
+						this.close();
+						return true;
+					}
+					if (buffer.hasRemaining()) {
+						outputCache.offer(buffer, task);
+						this.setOpWrite();
+						return false;
+					}
+					return true;
+				} else {
+					executor.safeInvokeCompleted(task);
+					return true;
+				}
+			} else {
+				outputCache.offer(buffer, task);
+				return false;
+			}
+		} else {
+			executor.safeInvokeFailed(task, this.writeException);
+		}
+		return true;
 	}
 
 	@Override
@@ -558,7 +580,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		@Override
 		public void process(ByteBuffer item, TaskCompletionHandler tag) {
 			if (tag != null) {
-				executor.safeInvokeFailed(tag,writeException);
+				executor.safeInvokeFailed(tag, writeException);
 			}
 		}
 	};

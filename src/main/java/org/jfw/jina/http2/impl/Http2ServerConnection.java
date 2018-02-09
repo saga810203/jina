@@ -64,9 +64,10 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 		if (endOfStream) {
 			this.requestInvoke(stream);
 		} else {
-			if (!stream.suspendRead) {
-				this.writeWindowUpdate(stream.id, size);
+			if (stream.suspendRead || size == 0) {
+				return;
 			}
+			this.writeWindowUpdate(stream.id, size);
 		}
 	}
 
@@ -297,7 +298,7 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 		while (stream.first != null) {
 			TaskCompletionHandler lis = stream.first.listenner;
 			if (lis != null) {
-				executor.safeInvokeFailed(lis, this.lastWriteException);
+				executor.safeInvokeFailed(lis, this.writeException);
 			}
 			stream.first = stream.first.next;
 		}
@@ -352,7 +353,6 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			}
 		});
 		list.free(new Handler<ServerHttp2Stream>() {
-
 			@Override
 			public void process(ServerHttp2Stream item) {
 				item.state = Http2Stream.STREAM_STATE_CLOSED;
@@ -399,13 +399,13 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 					stream.sendWindowSize = Integer.MAX_VALUE;
 				}
 			}
-			if(stream.resState > HttpResponse.STATE_INIT){
+			if (stream.resState > HttpResponse.STATE_INIT) {
 				streamWindowUpdateChange(stream);
 			}
 		}
 	}
-	
-	protected void streamWindowUpdateChange(ServerHttp2Stream stream){
+
+	protected void streamWindowUpdateChange(ServerHttp2Stream stream) {
 		Frame frame = null;
 		while (stream.first != null) {
 			int nsw = stream.sendWindowSize - stream.first.length;
@@ -425,9 +425,6 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			removeStream(stream);
 		}
 	}
-	
-
-
 
 	@Override
 	public void handleStreamData(int size, boolean endOfStream) {
@@ -526,7 +523,7 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			tail.listenner = task;
 			this.streamDataWrite(stream, tail);
 		} else {
-			executor.safeInvokeFailed(task, this.lastWriteException);
+			executor.safeInvokeFailed(task, this.writeException);
 		}
 	}
 
@@ -558,7 +555,7 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			tail.listenner = task;
 			this.streamLastDataWrite(stream, tail);
 		} else {
-			executor.safeInvokeFailed(task, this.lastWriteException);
+			executor.safeInvokeFailed(task, this.writeException);
 		}
 
 	}
@@ -584,7 +581,7 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			Frame frame = emptyDataFrame(stream.id);
 			streamLastDataWrite(stream, frame);
 		} else {
-			executor.safeInvokeFailed(task, this.lastWriteException);
+			executor.safeInvokeFailed(task, this.writeException);
 		}
 	}
 
@@ -675,14 +672,15 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 	@Override
 	public void keepAliveTimeout() {
 		this.removeKeepAliveCheck();
-		if(!goAwayed){
-			if(lastFrame==null && dataLast == null && activeStreams ==0){
-				this.goAwayed = true;				
-				this.writeGoAway(nextStreamId==1?0:(nextStreamId-2),0,executor.ouputCalcBuffer,0,0);
+		if (!goAwayed) {
+			if (lastFrame == null && dataLast == null && activeStreams == 0) {
+				this.goAwayed = true;
+				this.writeGoAway(nextStreamId == 1 ? 0 : (nextStreamId - 2), 0, executor.ouputCalcBuffer, 0, 0);
 				this.writeCloseFrame();
-			}else{
+			} else {
 				this.addKeepAliveCheck();
 				this.setOpRead();
+				this.setOpWrite();
 			}
 		}
 	}

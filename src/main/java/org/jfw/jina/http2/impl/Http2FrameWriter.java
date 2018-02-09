@@ -41,7 +41,6 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	protected Frame dataFirst;
 	protected Frame dataLast;
 
-	protected Throwable lastWriteException;
 
 	protected HpackDynamicTable localDynaTable = new HpackDynamicTable(4096);
 
@@ -61,12 +60,34 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	// }
 
 	protected void writeFrame(Frame frame) {
-		if (lastFrame == null) {
-			firstFrame = lastFrame = frame;
-			this.setOpWrite();
+		ByteBuffer buffer = frame.buffer;
+		TaskCompletionHandler task = frame.listenner;
+		if (this.writeException == null) {
+			if (this.firstFrame == null) {
+				if (buffer.hasRemaining()) {
+					try {
+						javaChannel.write(buffer);
+					} catch (Throwable e) {
+						this.writeException = e;
+						executor.safeInvokeFailed(task, e);
+						this.close();
+						return;
+					}
+					if(buffer.hasRemaining()){
+						firstFrame =lastFrame = frame;
+						this.setOpWrite();
+						return;
+					}
+				}
+				executor.safeInvokeCompleted(task);
+			}else{
+				this.lastFrame.next= frame;
+				this.lastFrame = frame;
+			}
 		} else {
-			lastFrame.next = frame;
-			lastFrame = frame;
+			if (task != null) {
+				executor.safeInvokeFailed(task, this.writeException);
+			}
 		}
 	}
 
@@ -75,7 +96,6 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		if (frame == null)
 			return false;
 		Frame tmp = null;
-		;
 		while (frame != null) {
 			tmp = frame.next;
 			frame.next = null;
@@ -301,9 +321,9 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		assert windowSizeIncrement > 0;
 		ByteBuffer buf = ByteBuffer.allocate(13);
 		buf.order(ByteOrder.BIG_ENDIAN);
-		buf.put((byte)0);
-		buf.put((byte)0);
-		buf.put((byte)4);
+		buf.put((byte) 0);
+		buf.put((byte) 0);
+		buf.put((byte) 4);
 		buf.put(FRAME_TYPE_WINDOW_UPDATE);
 		buf.put((byte) 0);
 		buf.putInt(streamId);
@@ -368,7 +388,6 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	protected void closeWriter() {
-
 		dataLast = null;
 		lastFrame = null;
 		Frame frame;
@@ -378,8 +397,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			dataFirst = frame.next;
 			freeFrame(frame);
 			if (listenner != null) {
-				executor.safeInvokeFailed(listenner,this.writeException);
-
+				executor.safeInvokeFailed(listenner, this.writeException);
 			}
 		}
 		while (firstFrame != null) {
@@ -388,7 +406,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			firstFrame = frame.next;
 			freeFrame(frame);
 			if (listenner != null) {
-				executor.safeInvokeFailed(listenner,this.writeException);
+				executor.safeInvokeFailed(listenner, this.writeException);
 			}
 		}
 	}
@@ -402,7 +420,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			try {
 				this.javaChannel.write(buf);
 			} catch (Throwable e) {
-				this.lastWriteException = e;
+				this.writeException = e;
 				this.close();
 				return;
 			}
@@ -429,6 +447,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			public void failed(Throwable exc, AsyncExecutor executor) {
 				close();
 			}
+
 			@Override
 			public void completed(AsyncExecutor executor) {
 				close();
@@ -451,18 +470,18 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		Frame ret = new Frame();
 		Frame curr = ret;
 		curr.next = null;
-		ByteBuffer buf= ByteBuffer.allocate(8192); 
+		ByteBuffer buf = ByteBuffer.allocate(8192);
 		buf.order(ByteOrder.BIG_ENDIAN);
 		for (;;) {
-			int payloadLength = Integer.min(length, 8192-9);
-			buf.put(executor.ouputCalcBuffer, 0,9);
+			int payloadLength = Integer.min(length, 8192 - 9);
+			buf.put(executor.ouputCalcBuffer, 0, 9);
 			buf.put(buffer, index, payloadLength);
 			length -= payloadLength;
 			boolean ok = length == 0;
-			int head = (payloadLength<<8)| FRAME_TYPE_DATA;
-			buf.putInt(0,head);
-			buf.put(4,ok?(endOfStream?Http2FlagsUtil.END_STREAM:0):0);
-			buf.putInt(5,streamId);
+			int head = (payloadLength << 8) | FRAME_TYPE_DATA;
+			buf.putInt(0, head);
+			buf.put(4, ok ? (endOfStream ? Http2FlagsUtil.END_STREAM : 0) : 0);
+			buf.putInt(5, streamId);
 			curr.type = FRAME_TYPE_DATA;
 			curr.length = payloadLength;
 			if (ok) {
@@ -471,7 +490,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 				index += payloadLength;
 				curr.next = new Frame();
 				curr = curr.next;
-				buf= ByteBuffer.allocate(8192); 
+				buf = ByteBuffer.allocate(8192);
 				buf.order(ByteOrder.BIG_ENDIAN);
 			}
 		}
@@ -500,11 +519,11 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			this.firstHeaderFrame = new Frame();
 			this.currHeaderFrame = this.firstHeaderFrame;
 			this.currHeaderFrame.next = null;
-			this.currentBuf =ByteBuffer.allocate(8192);
+			this.currentBuf = ByteBuffer.allocate(8192);
 			this.currentBuf.order(ByteOrder.BIG_ENDIAN);
-			this.currentBuf.put(frameReadBuffer,0,9);
+			this.currentBuf.put(frameReadBuffer, 0, 9);
 			this.encoderHeadLength = 0;
-			this.currentBufLength =8192-9;
+			this.currentBufLength = 8192 - 9;
 			this.headTotalSize = 0;
 		}
 
@@ -522,34 +541,34 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		private void swichFrame() {
 			boolean ff = this.firstHeaderFrame == this.currHeaderFrame;
 			int head = (this.encoderHeadLength << 8) | (ff ? FRAME_TYPE_HEADERS : FRAME_TYPE_CONTINUATION);
-			this.currentBuf.putInt(0,head);
-			this.currentBuf.put(4,(byte)0);
-			
-			this.currentBuf.putInt(5,this.streamId);
+			this.currentBuf.putInt(0, head);
+			this.currentBuf.put(4, (byte) 0);
+
+			this.currentBuf.putInt(5, this.streamId);
 			this.currentBuf.flip();
-			this.currHeaderFrame.buffer =currentBuf;
+			this.currHeaderFrame.buffer = currentBuf;
 			this.currHeaderFrame.type = ff ? FRAME_TYPE_HEADERS : FRAME_TYPE_CONTINUATION;
 			this.currHeaderFrame.length = this.encoderHeadLength;
 			Frame frame = new Frame();
 			frame.next = null;
 			this.currHeaderFrame.next = frame;
 			this.currHeaderFrame = frame;
-			this.currentBuf =ByteBuffer.allocate(8192);
+			this.currentBuf = ByteBuffer.allocate(8192);
 			this.currentBuf.order(ByteOrder.BIG_ENDIAN);
-			this.currentBuf.put(frameReadBuffer,0,9);
+			this.currentBuf.put(frameReadBuffer, 0, 9);
 			this.encoderHeadLength = 0;
-			this.currentBufLength = Integer.min(8192-9, remoteMaxFrameSize);
+			this.currentBufLength = Integer.min(8192 - 9, remoteMaxFrameSize);
 
 		}
 
 		private void endFrame() {
 			boolean ff = this.firstHeaderFrame == this.currHeaderFrame;
 			int head = (this.encoderHeadLength << 8) | (ff ? FRAME_TYPE_HEADERS : FRAME_TYPE_CONTINUATION);
-			this.currentBuf.putInt(0,head);
-			this.currentBuf.put(4,endOfStream ? Http2FlagsUtil.END_STREAM_END_HEADERS : Http2FlagsUtil.END_HEADERS);
-			this.currentBuf.putInt(5,this.streamId);
+			this.currentBuf.putInt(0, head);
+			this.currentBuf.put(4, endOfStream ? Http2FlagsUtil.END_STREAM_END_HEADERS : Http2FlagsUtil.END_HEADERS);
+			this.currentBuf.putInt(5, this.streamId);
 			this.currentBuf.flip();
-			this.currHeaderFrame.buffer =currentBuf;
+			this.currHeaderFrame.buffer = currentBuf;
 			this.currHeaderFrame.type = ff ? FRAME_TYPE_HEADERS : FRAME_TYPE_CONTINUATION;
 			this.currHeaderFrame.length = this.encoderHeadLength;
 			this.currHeaderFrame = null;
@@ -680,7 +699,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			} else {
 				long length = i - nbits;
 				ensureOutSize(1);
-				this.currentBuf.put((byte)(mask | nbits));
+				this.currentBuf.put((byte) (mask | nbits));
 				for (; (length & ~0x7F) != 0; length >>>= 7) {
 					ensureOutSize(1);
 					this.currentBuf.put((byte) ((length & 0x7F) | 0x80));
@@ -704,7 +723,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 				}
 				num = Integer.min(end - begin, this.currentBufLength);
 				for (int i = 0; i < num; ++begin, ++i) {
-					this.currentBuf.put((byte)string.charAt(begin));
+					this.currentBuf.put((byte) string.charAt(begin));
 				}
 				this.currentBufLength -= num;
 				this.encoderHeadLength += num;
