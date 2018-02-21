@@ -118,7 +118,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			if (len > 0) {
 				this.handleRead(len);
 			}
-			handleRead(-1);
+			handleInputClose();
 			this.cleanOpRead();
 			return;
 		} catch (IOException e) {
@@ -126,7 +126,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			if (len > 0) {
 				this.handleRead(len);
 			}
-			handleRead(-1);
+			handleInputClose();
 			this.cleanOpRead();
 			this.hanldReadException(e);
 			return;
@@ -146,7 +146,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			if (len > 0) {
 				this.handleRead(len);
 			}
-			this.handleRead(-1);
+			handleInputClose();
 		}
 	}
 
@@ -156,6 +156,9 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 	// task.failed(e, executor);
 	// this.closeJavaChannel();
 	// }
+
+	protected abstract void handleInputClose() ;		
+
 
 	protected final void setOpRead() {
 		assert this.key != null && this.key.isValid();
@@ -335,7 +338,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 	@Override
 	public void write() {
 		TagNode tagNode = null;
-		outputCache.peekTagNode();
+//		outputCache.peekTagNode();
 		while ((tagNode = outputCache.peekTagNode()) != null) {
 			ByteBuffer buf = tagNode.item();
 			TaskCompletionHandler task = (TaskCompletionHandler) tagNode.tag();

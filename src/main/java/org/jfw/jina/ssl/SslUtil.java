@@ -1,7 +1,6 @@
 package org.jfw.jina.ssl;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 import javax.net.ssl.SSLHandshakeException;
 
@@ -24,37 +23,37 @@ public final class SslUtil {
 	/**
 	 * alert
 	 */
-	static final int SSL_CONTENT_TYPE_ALERT = 21;
+	public static final int SSL_CONTENT_TYPE_ALERT = 21;
 
 	/**
 	 * handshake
 	 */
-	static final int SSL_CONTENT_TYPE_HANDSHAKE = 22;
+	public static final int SSL_CONTENT_TYPE_HANDSHAKE = 22;
 
 	/**
 	 * application data
 	 */
-	static final int SSL_CONTENT_TYPE_APPLICATION_DATA = 23;
+	public static final int SSL_CONTENT_TYPE_APPLICATION_DATA = 23;
 
 	/**
 	 * HeartBeat Extension
 	 */
-	static final int SSL_CONTENT_TYPE_EXTENSION_HEARTBEAT = 24;
+	public static final int SSL_CONTENT_TYPE_EXTENSION_HEARTBEAT = 24;
 
 	/**
 	 * the length of the ssl record header (in bytes)
 	 */
-	static final int SSL_RECORD_HEADER_LENGTH = 5;
+	public static final int SSL_RECORD_HEADER_LENGTH = 5;
 
 	/**
 	 * Not enough data in buffer to parse the record length
 	 */
-	static final int NOT_ENOUGH_DATA = -1;
+	public static final int NOT_ENOUGH_DATA = -1;
 
 	/**
 	 * data is not encrypted
 	 */
-	static final int NOT_ENCRYPTED = -2;
+	public static final int NOT_ENCRYPTED = -2;
 
 	private SslUtil() {
 	};
@@ -67,9 +66,8 @@ public final class SslUtil {
 		return (SSLHandshakeException) new SSLHandshakeException(e.getMessage()).initCause(e);
 	}
 
-	static int getEncryptedPacketLength(ByteBuffer buffer, int pos) {
+	public static int getEncryptedPacketLength(ByteBuffer buffer, int pos) {
 		int packetLength = 0;
-
 		// SSLv3 or TLS - Check ContentType
 		boolean tls;
 		switch (buffer.get(pos)) {

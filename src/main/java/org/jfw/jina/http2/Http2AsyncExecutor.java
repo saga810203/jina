@@ -27,5 +27,5 @@ public class Http2AsyncExecutor extends HttpAsyncExecutor {
 	public final DefaultHttpHeaders shareHeaders = new DefaultHttpHeaders();
 	
 	public final ByteBuffer deCryptBuffer = ByteBuffer.allocate(8192);
-	public final byte[] deCryptByteArray = new byte[4096];
+	public final byte[] deCryptByteArray = deCryptBuffer.array();
 }

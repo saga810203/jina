@@ -80,7 +80,6 @@ public class SslContextBuilder {
     private long sessionTimeout;
     private String[] protocols;
     private String[] applicationProtocols;
-    private boolean startTls;
 
     private SslContextBuilder(boolean forServer) {
         this.forServer = forServer;
@@ -268,14 +267,6 @@ public class SslContextBuilder {
     	return this;
     }
 
-    /**
-     * {@code true} if the first write request shouldn't be encrypted.
-     */
-    public SslContextBuilder startTls(boolean startTls) {
-        this.startTls = startTls;
-        return this;
-    }
-
 
 
     /**
@@ -286,7 +277,7 @@ public class SslContextBuilder {
     public SslContext build() throws SSLException {
         if (forServer) {
         	return new JdkSslServerContext(trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory,
-					ciphers, cipherFilter,sessionCacheSize, sessionTimeout, protocols, startTls,applicationProtocols);
+					ciphers, cipherFilter,sessionCacheSize, sessionTimeout, protocols,applicationProtocols);
         } else {
         	return new JdkSslClientContext( trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, ciphers,
 					cipherFilter,protocols, sessionCacheSize, sessionTimeout,applicationProtocols);

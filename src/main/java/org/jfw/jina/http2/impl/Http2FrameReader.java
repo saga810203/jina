@@ -107,32 +107,28 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	protected void handleRead(int len) {
 		this.removeKeepAliveCheck();
-		if (len > 0) {
-			while (this.widx > this.ridx) {
-				if (this.currentState == FRAME_STATE_READ_HEADER) {
-					if (!doReadFrameHeader()) {
-						this.addKeepAliveCheck();
-						this.compactReadBuffer();
-						return;
-					}
-				}
-				if (this.currentState == FRAME_STATE_READ_DATA) {
-					if (!doReadFramePayLoad()) {
-						this.compactReadBuffer();
-						this.addKeepAliveCheck();
-						return;
-					}
-				}
-				if (this.currentState < 0) {
-					this.handleProtocolError();
+		while (this.widx > this.ridx) {
+			if (this.currentState == FRAME_STATE_READ_HEADER) {
+				if (!doReadFrameHeader()) {
+					this.addKeepAliveCheck();
+					this.compactReadBuffer();
 					return;
 				}
 			}
-			if(this.activeStreams ==0){
-				this.addKeepAliveCheck();
+			if (this.currentState == FRAME_STATE_READ_DATA) {
+				if (!doReadFramePayLoad()) {
+					this.compactReadBuffer();
+					this.addKeepAliveCheck();
+					return;
+				}
 			}
-		} else {
-			handleInputClose();
+			if (this.currentState < 0) {
+				this.handleProtocolError();
+				return;
+			}
+		}
+		if (this.activeStreams == 0) {
+			this.addKeepAliveCheck();
 		}
 	}
 
@@ -183,14 +179,17 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	private void handleGoAwayFrame() {
 		byte[] buffer = cachePayload.buffer;
-		int lastStreamId = ((buffer[0] & 0x7f) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8 | buffer[3] & 0xff);
-		long errorCode = ((buffer[4] & 0xff) << 24 | (buffer[5] & 0xff) << 16 | (buffer[6] & 0xff) << 8 | buffer[7] & 0xff) & 0xFFFFFFFFL;
+		int lastStreamId = ((buffer[0] & 0x7f) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8
+				| buffer[3] & 0xff);
+		long errorCode = ((buffer[4] & 0xff) << 24 | (buffer[5] & 0xff) << 16 | (buffer[6] & 0xff) << 8
+				| buffer[7] & 0xff) & 0xFFFFFFFFL;
 		goAway(lastStreamId, errorCode);
 	}
 
 	private void handleRstStreamFrame() {
 		byte[] buffer = cachePayload.buffer;
-		long errorCode = ((buffer[0] & 0xff) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8 | buffer[3] & 0xff) & 0xFFFFFFFFL;
+		long errorCode = ((buffer[0] & 0xff) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8
+				| buffer[3] & 0xff) & 0xFFFFFFFFL;
 		resetStream(errorCode);
 	}
 
@@ -215,8 +214,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			Http2Settings settings = new Http2Settings();
 			for (int index = 0, setIdx = 0; index < numSettings; ++index) {
 				char id = (char) (((buffer[setIdx++] << 8) | (buffer[setIdx++] & 0xFF)) & 0xffff);
-				long value = 0xffffffffL & (((buffer[setIdx++] & 0xff) << 24) | ((buffer[setIdx++] & 0xff) << 16) | ((buffer[setIdx++] & 0xff) << 8)
-						| (buffer[setIdx++] & 0xff));
+				long value = 0xffffffffL & (((buffer[setIdx++] & 0xff) << 24) | ((buffer[setIdx++] & 0xff) << 16)
+						| ((buffer[setIdx++] & 0xff) << 8) | (buffer[setIdx++] & 0xff));
 				try {
 					if (id == Http2Settings.SETTINGS_HEADER_TABLE_SIZE) {
 						settings.headerTableSize(value);
@@ -248,7 +247,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	protected void handlePriorityFrame() {
 		byte[] buffer = this.cachePayload.buffer;
-		long word1 = (((buffer[0] & 0xff) << 24) | ((buffer[2] & 0xff) << 16) | ((buffer[3] & 0xff) << 8) | (buffer[4] & 0xff)) & 0xFFFFFFFFL;
+		long word1 = (((buffer[0] & 0xff) << 24) | ((buffer[2] & 0xff) << 16) | ((buffer[3] & 0xff) << 8)
+				| (buffer[4] & 0xff)) & 0xFFFFFFFFL;
 
 		final boolean exclusive = (word1 & 0x80000000L) != 0;
 		final int streamDependency = (int) (word1 & 0x7FFFFFFFL);
@@ -262,7 +262,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	protected void handleWindowUpdateFrame() {
 		byte[] buffer = this.cachePayload.buffer;
-		int windowSizeIncrement = (((buffer[0] & 0x7f) << 24) | ((buffer[1] & 0xff) << 16) | ((buffer[2] & 0xff) << 8) | (buffer[3] & 0xff));
+		int windowSizeIncrement = (((buffer[0] & 0x7f) << 24) | ((buffer[1] & 0xff) << 16) | ((buffer[2] & 0xff) << 8)
+				| (buffer[3] & 0xff));
 		if (windowSizeIncrement == 0) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_WINDOW_UPDATE;
 		}
@@ -337,8 +338,10 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		}
 		if (Http2FlagsUtil.priorityPresent(frameFlag)) {
 			priorityInHeaders = true;
-			long word1 = (((buffer[this.cachePayload.ridx++] & 0xff) << 24) | ((buffer[this.cachePayload.ridx++] & 0xff) << 16)
-					| ((buffer[this.cachePayload.ridx++] & 0xff) << 8) | (buffer[this.cachePayload.ridx++] & 0xff)) & 0xFFFFFFFFL;
+			long word1 = (((buffer[this.cachePayload.ridx++] & 0xff) << 24)
+					| ((buffer[this.cachePayload.ridx++] & 0xff) << 16)
+					| ((buffer[this.cachePayload.ridx++] & 0xff) << 8) | (buffer[this.cachePayload.ridx++] & 0xff))
+					& 0xFFFFFFFFL;
 			exclusiveInHeaders = (word1 & 0x80000000L) != 0;
 			streamDependency = (int) (word1 & 0x7FFFFFFFL);
 			if (streamDependency == streamId) {
@@ -375,14 +378,16 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		if (this.frameHeaderIndex == FRAME_CONFIG_HEADER_SIZE) {
 			this.frameHeaderIndex = 0;
 
-			this.payloadLength = (this.frameReadBuffer[0] & 0xff) << 16 | ((frameReadBuffer[1] & 0xff) << 8) | (frameReadBuffer[2] & 0xff);
+			this.payloadLength = (this.frameReadBuffer[0] & 0xff) << 16 | ((frameReadBuffer[1] & 0xff) << 8)
+					| (frameReadBuffer[2] & 0xff);
 			if (payloadLength > this.localMaxFrameSize) {
 				this.currentState = Http2ProtocolError.ERROR_MAX_FRAME_SIZE;
 				return true;
 			}
 			frameType = this.frameReadBuffer[3];
 			this.frameFlag = this.frameReadBuffer[4];
-			streamId = ((frameReadBuffer[5] & 0x7f) << 24 | (frameReadBuffer[6] & 0xff) << 16 | (frameReadBuffer[7] & 0xff) << 8 | frameReadBuffer[8] & 0xff);
+			streamId = ((frameReadBuffer[5] & 0x7f) << 24 | (frameReadBuffer[6] & 0xff) << 16
+					| (frameReadBuffer[7] & 0xff) << 8 | frameReadBuffer[8] & 0xff);
 
 			this.currentState = FRAME_STATE_READ_DATA;
 
@@ -555,7 +560,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_FRAME_WITH_HEADER_CONTINUATION;
 			return;
 		}
-		if (payloadLength < (Http2FlagsUtil.getNumPriorityBytes(this.frameFlag)) + Http2FlagsUtil.getPaddingPresenceFieldLength(this.frameFlag)) {
+		if (payloadLength < (Http2FlagsUtil.getNumPriorityBytes(this.frameFlag))
+				+ Http2FlagsUtil.getPaddingPresenceFieldLength(this.frameFlag)) {
 			this.currentState = Http2ProtocolError.ERROR_FRAME_INVALID_PAYLOAD_LENGTH;
 			return;
 		}
@@ -581,7 +587,6 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		// TODO AND EXISTS STREAM
 
 	}
-
 
 	protected DNode keepAliveNode;
 	protected long keepAliveTimeout = Long.MAX_VALUE;

@@ -86,7 +86,6 @@ public abstract class SslContext {
 		}
 	}
 
-	private final boolean startTls;
 
 	
 
@@ -94,8 +93,7 @@ public abstract class SslContext {
 	/**
 	 * Creates a new instance.
 	 */
-	protected SslContext(boolean startTls) {
-		this.startTls = startTls;
+	protected SslContext() {
 	}
 
 	/**

@@ -15,14 +15,14 @@ public class JdkSslClientContext extends JdkSslContext {
 	JdkSslClientContext(File trustCertCollectionFile, TrustManagerFactory trustManagerFactory, Iterable<String> ciphers, CipherSuiteFilter cipherFilter,
 			long sessionCacheSize, long sessionTimeout, String[] applicationProtocols) throws SSLException {
 		super(newSSLContext(toX509CertificatesInternal(trustCertCollectionFile), trustManagerFactory, null, null, null, null, sessionCacheSize, sessionTimeout),
-				true, ciphers, cipherFilter, null, false, applicationProtocols);
+				true, ciphers, cipherFilter, null, applicationProtocols);
 	}
 
 	JdkSslClientContext(X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain, PrivateKey key,
 			String keyPassword, KeyManagerFactory keyManagerFactory, Iterable<String> ciphers, CipherSuiteFilter cipherFilter, String[] protocols,
 			long sessionCacheSize, long sessionTimeout, String[] applicationProtocols) throws SSLException {
 		super(newSSLContext(trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, sessionCacheSize, sessionTimeout),
-				true, ciphers, cipherFilter, protocols, false, applicationProtocols);
+				true, ciphers, cipherFilter, protocols, applicationProtocols);
 	}
 
 	private static SSLContext newSSLContext(X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain,

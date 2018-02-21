@@ -86,8 +86,8 @@ public abstract class JdkSslContext extends SslContext {
 	private final boolean isClient;
 
 	public JdkSslContext(SSLContext sslContext, boolean isClient, Iterable<String> ciphers, CipherSuiteFilter cipherFilter,
-			String[] protocols, boolean startTls,String[] appcationProtocols) {
-		super(startTls);
+			String[] protocols,String[] appcationProtocols) {
+		super();
 		cipherSuites = cipherFilter.filterCipherSuites(ciphers, DEFAULT_CIPHERS, SUPPORTED_CIPHERS);
 		this.protocols = protocols == null ? DEFAULT_PROTOCOLS : protocols;
 		unmodifiableCipherSuites = Collections.unmodifiableList(Arrays.asList(cipherSuites));

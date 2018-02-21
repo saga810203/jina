@@ -530,11 +530,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		StringWriter sw = new StringWriter();
 		PrintWriter pw = new PrintWriter(sw);
 		e.printStackTrace(pw);
-		buf = StringUtil.utf8(HttpResponseStatus.buildHtmlPage(HttpResponseStatus.INTERNAL_SERVER_ERROR, sw.toString()));
+		buf = StringUtil
+				.utf8(HttpResponseStatus.buildHtmlPage(HttpResponseStatus.INTERNAL_SERVER_ERROR, sw.toString()));
 		response.setStatus(HttpResponseStatus.INTERNAL_SERVER_ERROR);
 		response.unsafeContentLength(buf.length);
 		response.unsafeWrite(buf, 0, buf.length);
-//		response.unsafeFlush();
+		// response.unsafeFlush();
 		request.setRequestExecutor(IGRONE_EXECUTOR);
 	}
 
@@ -628,75 +629,74 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	@Override
 	protected void handleRead(int len) {
 		this.removeKeepAliveCheck();
-		if (len > 0) {
-			for (;;) {
-				if (currentState == HTTP_STATE_SKIP_CONTROL_CHARS) {
-					if (!this.doSkipControlChars()) {
-						this.addKeepAliveCheck();
-						return;
-					}
-				}
-				if (currentState == HTTP_STATE_READ_INITIAL) {
-					if (!this.doReadRequestLine()) {
-						this.addKeepAliveCheck();
-						return;
-					}
-				}
-				if (currentState == HTTP_STATE_READ_HEADER) {
-					if (!this.doReadHeaders()) {
-						this.addKeepAliveCheck();
-						return;
-					}
-				}
-				if (currentState == HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT) {
-					int dlen = this.widx - this.ridx;
-					if (len > 0) {
-						this.requestBodyRead(dlen, false);
-						this.clearReadBuffer();
-					}
-					if (!request.supended) {
-						this.addKeepAliveCheck();
-					} else {
-						this.cleanOpRead();
-					}
-					return;
-				}
-				if (currentState == HTTP_STATE_READ_FIXED_LENGTH_CONTENT) {
-					if (!this.handleFixLenthRead()) {
-						if (request.supended) {
-							this.cleanOpRead();
-						} else {
-							this.addKeepAliveCheck();
-						}
-						return;
-					}
-				}
-				if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT
-						|| currentState == HTTP_STATE_READ_CHUNK_DELIMITER || currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
-					if (!this.readInChunked()) {
-						if (request.supended) {
-							this.cleanOpRead();
-						} else {
-							this.addKeepAliveCheck();
-						}
-						return;
-					}
-				}
-				if (currentState == HTTP_STATE_INVOKING) {
-					this.cleanOpRead();
-					return;
-				}
-				if (currentState == HTTP_STATE_IGNORE) {
+
+		for (;;) {
+			if (currentState == HTTP_STATE_SKIP_CONTROL_CHARS) {
+				if (!this.doSkipControlChars()) {
+					this.addKeepAliveCheck();
 					return;
 				}
 			}
-		} else {
-			this.cleanOpRead();
-			this.handleCloseInput();
+			if (currentState == HTTP_STATE_READ_INITIAL) {
+				if (!this.doReadRequestLine()) {
+					this.addKeepAliveCheck();
+					return;
+				}
+			}
+			if (currentState == HTTP_STATE_READ_HEADER) {
+				if (!this.doReadHeaders()) {
+					this.addKeepAliveCheck();
+					return;
+				}
+			}
+			if (currentState == HTTP_STATE_READ_VARIABLE_LENGTH_CONTENT) {
+				int dlen = this.widx - this.ridx;
+				if (len > 0) {
+					this.requestBodyRead(dlen, false);
+					this.clearReadBuffer();
+				}
+				if (!request.supended) {
+					this.addKeepAliveCheck();
+				} else {
+					this.cleanOpRead();
+				}
+				return;
+			}
+			if (currentState == HTTP_STATE_READ_FIXED_LENGTH_CONTENT) {
+				if (!this.handleFixLenthRead()) {
+					if (request.supended) {
+						this.cleanOpRead();
+					} else {
+						this.addKeepAliveCheck();
+					}
+					return;
+				}
+			}
+			if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT
+					|| currentState == HTTP_STATE_READ_CHUNK_DELIMITER
+					|| currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
+				if (!this.readInChunked()) {
+					if (request.supended) {
+						this.cleanOpRead();
+					} else {
+						this.addKeepAliveCheck();
+					}
+					return;
+				}
+			}
+			if (currentState == HTTP_STATE_INVOKING) {
+				this.cleanOpRead();
+				return;
+			}
+			if (currentState == HTTP_STATE_IGNORE) {
+				return;
+			}
 		}
+
 	}
 
-	protected void handleCloseInput() {
+	@Override
+	protected void handleInputClose() {
 		switch (currentState) {
 			case HTTP_STATE_SKIP_CONTROL_CHARS: {
 				this.flushData(closeTask);
@@ -977,7 +977,8 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			writeData(HttpConsts.CRLF, 0, 2);
 			writeData(buffer, index, length);
 			writeData(HttpConsts.CRLF, 0, 2);
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.defaultFlushTask());
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
+					this.defaultFlushTask());
 		}
 
 		public void flush() {
@@ -994,7 +995,8 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.defaultFlushTask());
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
+					this.defaultFlushTask());
 		}
 
 		@Override
@@ -1024,7 +1026,8 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			writeData(HttpConsts.CRLF, 0, 2);
 			writeData(buffer, index, length);
 			writeData(HttpConsts.CRLF, 0, 2);
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.wrap(task));
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
+					this.wrap(task));
 
 		}
 
@@ -1044,7 +1047,8 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.wrap(task));
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
+					this.wrap(task));
 		}
 
 		@Override

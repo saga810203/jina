@@ -1,21 +1,17 @@
 package org.jfw.jina.ssl.http;
 
-import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SocketChannel;
 
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLEngineResult;
-import javax.net.ssl.SSLEngineResult.Status;
 import javax.net.ssl.SSLException;
 
-import org.jfw.jina.buffer.EmptyBuf;
-import org.jfw.jina.buffer.InputBuf;
-import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.http.server.HttpChannel;
 import org.jfw.jina.http2.Http2AsyncExecutor;
 import org.jfw.jina.ssl.SslAsyncChannel;
+import org.jfw.jina.ssl.SslUtil;
 import org.jfw.jina.ssl.engine.JdkSslEngine;
 import org.jfw.jina.util.Queue;
 
@@ -24,10 +20,10 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 	private final byte[] byteArrayBuffer;
 	private final ByteBuffer decryptBuffer;
 
-	private ByteBuffer readBuffer;
-	private int readIndex;
-	private int writeIndex;
-	private int capacity;
+	protected ByteBuffer sslReadBuffer;
+	protected int sslCapacity;
+	protected int sslRidx;
+	protected int sslWidx;
 
 	private JdkSslEngine wrapEngine;
 	private SSLEngine engine;
@@ -37,165 +33,169 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 		this.byteArrayBuffer = executor.deCryptByteArray;
 		this.decryptBuffer = executor.deCryptBuffer;
 		copyOutQueue(sslChannel.getOutCache());
-		this.readBuffer = sslChannel.getReadBuffer();
-		this.readIndex = sslChannel.getReadIndex();
-		this.writeIndex = sslChannel.getWriteIndex();
-		this.capacity = this.readBuffer.capacity();
+		copyInQueue(sslChannel.getCacheUnwrapData());
+		this.sslReadBuffer = sslChannel.getSslReadBuffer();
+		this.sslRidx = sslChannel.getSslRidx();
+		this.sslWidx = sslChannel.getSslWidx();
+		this.sslCapacity = this.sslReadBuffer.capacity();
 		this.wrapEngine = sslChannel.getWrapSslEngine();
 		this.engine = this.wrapEngine.getWrappedEngine();
 	}
 
-	private void compactReadBuffer() {
-		if (this.readIndex > 0) {
-			this.readBuffer.flip();
-			this.readBuffer.position(this.readIndex);
-			this.readBuffer.compact();
-			this.writeIndex = this.writeIndex - this.readIndex;
-			this.readIndex = 0;
-			this.readBuffer.limit(this.capacity).position(writeIndex);
+	private void copyInQueue(ByteArrayOutputStream buffer) {
+		int len = buffer.size();
+		byte[] bds = buffer.toByteArray();
+		int bidx = 0;
+		while (len > 0) {
+			int dl = Integer.min(len, rbuffer.capacity());
+			rbuffer.clear();
+			rbuffer.put(bds, bidx, dl);
+			this.ridx = 0;
+			this.widx = dl;
+			this.handleRead(dl);
+			bidx += dl;
+			len -= dl;
 		}
 	}
 
-	private void extendReadBuffer() {
-		this.capacity += 4096;
-		ByteBuffer buffer = ByteBuffer.allocate(capacity);
-		buffer.put((ByteBuffer) readBuffer.flip().position(this.readIndex));
-		this.writeIndex = this.writeIndex - this.readIndex;
-		this.readIndex = 0;
-		this.readBuffer = buffer;
+	private void compactSslReadBuffer() {
+		if (this.sslRidx == this.sslWidx) {
+			this.sslReadBuffer.clear();
+		} else if (this.sslRidx > 0) {
+			this.sslReadBuffer.flip();
+			this.sslReadBuffer.position(this.sslRidx);
+			this.sslReadBuffer.compact();
+			this.sslWidx = this.sslWidx - this.sslRidx;
+			this.sslRidx = 0;
+			this.sslReadBuffer.limit(this.sslCapacity).position(sslWidx);
+		}
+	}
+
+	private void extendSslReadBuffer() {
+		this.sslCapacity += 4096;
+		ByteBuffer buffer = ByteBuffer.allocate(sslCapacity);
+		buffer.put((ByteBuffer) sslReadBuffer.flip().position(this.sslRidx));
+		this.sslWidx = this.sslWidx - this.sslRidx;
+		this.sslRidx = 0;
+		this.sslReadBuffer = buffer;
 	}
 
 	private void copyOutQueue(Queue<ByteBuffer> queue) {
-		OutputBuf obuf = null;
 		for (;;) {
 			ByteBuffer buf = queue.poll();
 			if (buf != null) {
 				while (buf.hasRemaining()) {
 					int len = Integer.min(buf.remaining(), byteArrayBuffer.length);
 					buf.get(byteArrayBuffer, 0, len);
-					obuf = this.writeBytes(obuf == null ? executor.allocBuffer() : obuf, byteArrayBuffer, 0, len);
+					this.writeData(byteArrayBuffer, 0, len);
 				}
 			} else {
 				break;
 			}
 		}
-		if (obuf != null && obuf.size() > 0) {
-			this.outputCache.offer(obuf.input());
-			obuf.release();
-		}
 	}
 
-	private boolean unwrap() {
-		OutputBuf buf = executor.allocBuffer();
-		ByteBuffer buffer = buf.original();
-		int perv = -1;
-		try {
-			int len = 0;
-			SSLEngineResult result = null;
-			SSLEngineResult.Status state = null;
-			for (;;) {
-				try {
-					result = this.engine.unwrap((ByteBuffer) this.readBuffer.duplicate().flip().position(this.readIndex), buffer);
-				} catch (SSLException e) {
-					return false;
-				}
-				this.readIndex += result.bytesConsumed();
-				len += result.bytesProduced();
-				state = result.getStatus();
-				switch (state) {
-					case BUFFER_OVERFLOW:
-						if (len > 0) {
-							buf.unsafeWriteIndex(len);
-							buffer.flip();
-							InputBuf ib = buf.input();
-							buf.release();
-							buf = executor.allocBuffer();
-							buffer = buf.original();
-							this.handleRead(ib, len);
-							len = 0;
-						} else {
-							buf.release();
-							// TODO :
-							throw new RuntimeException("ssl package length to large");
-						}
-						break;
-					case BUFFER_UNDERFLOW:
-						if (len > 0) {
-							buf.unsafeWriteIndex(len);
-							buffer.flip();
-							InputBuf ib = buf.input();
-							buf.release();
-							buf = executor.allocBuffer();
-							buffer = buf.original();
-							this.handleRead(ib, len);
-							len = 0;
-							if (perv == this.readIndex) {
-								return true;
-							}
-							perv = this.readIndex;
-						} else {
-							// TODO :
-							if (this.readIndex == 0)
-								throw new RuntimeException("ssl package length to large");
-							return true;
-						}
-						break;
-					case CLOSED:
-						if (len > 0) {
-							buf.unsafeWriteIndex(len);
-							buffer.flip();
-							InputBuf ib = buf.input();
-							buf.release();
-							buf = executor.allocBuffer();
-							buffer = buf.original();
-							this.handleRead(ib, len);
-							len = 0;
-							return false;
-						}
-						return false;
-					default:
-						break;
-				}
+	private int packetLen;
 
+	private void unwrap() {
+		SSLEngineResult result = null;
+		SSLEngineResult.Status state = null;
+		for (;;) {
+			int dl = this.sslWidx - this.sslRidx;
+			if (this.packetLen > 0) {
+				if (dl < this.packetLen) {
+					break;
+				}
+			} else {
+				if (dl < SslUtil.SSL_RECORD_HEADER_LENGTH) {
+					return;
+				}
+				int pl = SslUtil.getEncryptedPacketLength(this.sslReadBuffer, this.sslRidx);
+				if (pl == SslUtil.NOT_ENCRYPTED) {
+					// Not an SSL/TLS packet
+					// TODO : log "not an SSL/TLS record: " +
+					// ByteBufUtil.hexDump(in));
+					this.close();
+					return;
+				} else if (dl < pl) {
+					this.packetLen = pl;
+					return;
+				}
 			}
-		} finally {
-			buf.release();
-			buffer = null;
+			try {
+				result = this.engine.unwrap((ByteBuffer) this.sslReadBuffer.duplicate().flip().position(this.sslRidx),
+						this.rbuffer);
+			} catch (SSLException e) {
+				this.close();
+				return;
+			}
+			this.sslRidx += result.bytesConsumed();
+			this.widx += result.bytesProduced();
+			int len = this.widx - this.ridx;
+			state = result.getStatus();
+			switch (state) {
+				case BUFFER_OVERFLOW: {
+					if (len > 0) {
+						this.handleRead(len);
+						this.compactReadBuffer();
+					} else {
+						this.close();
+						// TODO :
+						throw new RuntimeException("ssl package length to large");
+					}
+					break;
+				}
+				case BUFFER_UNDERFLOW: {
+					if (this.sslRidx > 0) {
+						this.compactSslReadBuffer();
+					} else {
+						this.close();
+						throw new RuntimeException("ssl package length to large");
+					}
+					break;
+				}
+				case CLOSED:
+					if (len > 0) {
+						this.handleRead(len);
+						this.handleInputClose();
+						return;
+					}
+					return;
+				default:
+					break;
+			}
+
 		}
+
 	}
 
 	@Override
-	public final void read() {
+	public void read() {
 		int len = 0;
 		for (;;) {
-			this.compactReadBuffer();
 			try {
-				len = this.javaChannel.read(readBuffer);
+				len = this.javaChannel.read(sslReadBuffer);
 			} catch (Throwable e) {
 				this.close();
 				return;
 			}
-			if (len > 0) {
-				this.writeIndex += len;
-				if (!this.unwrap()) {
-					this.close();
-					return;
-				}
-			} else if (len == 0) {
-				if (!this.unwrap()) {
-					this.close();
-					return;
-				}
-				return;
-			} else {
-				if (!this.unwrap()) {
-					this.close();
-					return;
-				}
-				this.handleRead(EmptyBuf.INSTANCE, -1);
+			if (len == 0) {
+				break;
+			} else if (len < 0) {
+				unwrap();
+				this.handleInputClose();
 				return;
 			}
+			this.sslWidx += len;
+			if (this.sslWidx >= sslCapacity) {
+				if (this.sslRidx > 0) {
+					this.compactSslReadBuffer();
+				} else {
+					this.extendSslReadBuffer();
+				}
+			}
 		}
+		unwrap();
 	}
 
 	@Override
@@ -208,10 +208,7 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 			}
 		this.wrapEngine.closeOutbound();
 		this.wrapEngine = null;
-		this.engine = null;
-		this.
-				
+		this.engine = null;		
 	}
 
-	
 }

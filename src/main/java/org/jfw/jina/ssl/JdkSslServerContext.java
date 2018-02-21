@@ -12,9 +12,9 @@ import javax.net.ssl.TrustManagerFactory;
 public class JdkSslServerContext extends JdkSslContext {
 	JdkSslServerContext(X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain, PrivateKey key,
 			String keyPassword, KeyManagerFactory keyManagerFactory, Iterable<String> ciphers, CipherSuiteFilter cipherFilter, long sessionCacheSize,
-			long sessionTimeout, String[] protocols, boolean startTls,String[] appcationProtocols) throws SSLException {
+			long sessionTimeout, String[] protocols,String[] appcationProtocols) throws SSLException {
 		super(newSSLContext(trustCertCollection, trustManagerFactory, keyCertChain, key, keyPassword, keyManagerFactory, sessionCacheSize,
-				sessionTimeout), false, ciphers, cipherFilter,protocols, startTls,appcationProtocols);
+				sessionTimeout), false, ciphers, cipherFilter,protocols,appcationProtocols);
 	}
 
 	private static SSLContext newSSLContext(X509Certificate[] trustCertCollection, TrustManagerFactory trustManagerFactory, X509Certificate[] keyCertChain,
