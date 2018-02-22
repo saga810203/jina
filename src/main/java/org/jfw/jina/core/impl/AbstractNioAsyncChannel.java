@@ -53,6 +53,12 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 	public void doRegister() throws ClosedChannelException {
 		assert this.javaChannel != null;
+		try {
+			this.javaChannel.configureBlocking(false);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		this.key = this.javaChannel.register(this.executor.unwrappedSelector(), SelectionKey.OP_READ, this);
 		this.afterRegister();
 	}
@@ -64,7 +70,31 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.close();
 	}
 
+	private static final NioAsyncChannel NOOP_CHANNEL = new NioAsyncChannel(){
+
+		@Override
+		public void read() {
+		}
+
+		@Override
+		public void write() {
+		}
+
+		@Override
+		public void setSelectionKey(SelectionKey key) {
+		}
+
+		@Override
+		public void close() {
+		}
+
+		@Override
+		public void connected() {
+		}
+		
+	};
 	protected void closeJavaChannel() {
+		System.out.println("close java chanenl");
 		assert this.executor.inLoop();
 		SocketChannel jc = this.javaChannel;
 		SelectionKey k = this.key;
@@ -72,6 +102,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.key = null;
 		if (k != null) {
 			try {
+				k.attach(NOOP_CHANNEL);
 				k.cancel();
 			} catch (Exception e) {
 			}
@@ -172,7 +203,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		assert this.key != null && this.key.isValid();
 		final int interestOps = key.interestOps();
 		if ((interestOps & SelectionKey.OP_READ) != 0) {
-			key.interestOps(interestOps | ~SelectionKey.OP_READ);
+			key.interestOps(interestOps & ~SelectionKey.OP_READ);
 		}
 	}
 
@@ -188,7 +219,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		assert this.key != null && this.key.isValid();
 		final int interestOps = key.interestOps();
 		if ((interestOps & SelectionKey.OP_WRITE) != 0) {
-			key.interestOps(interestOps | ~SelectionKey.OP_WRITE);
+			key.interestOps(interestOps & ~SelectionKey.OP_WRITE);
 		}
 	}
 
@@ -208,6 +239,8 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		}
 		while (len > 0) {
 			int wl = Integer.min(cacheBuffer.remaining(), len);
+			cacheBuffer.put(buf,index,wl);
+			index+=wl;
 			len -= wl;
 			if (len > 0) {
 				cacheBuffer.flip();
@@ -247,6 +280,8 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 			}
 			while (len > 0) {
 				int wl = Integer.min(cacheBuffer.remaining(), len);
+				cacheBuffer.put(buf,index,wl);
+				index+=wl;
 				len -= wl;
 				if (len > 0) {
 					cacheBuffer.flip();
@@ -276,7 +311,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		}
 	}
 
-	protected boolean write(ByteBuffer buffer) {
+	protected void write(ByteBuffer buffer) {
 		if (this.writeException == null) {
 			if (outputCache.isEmpty()) {
 				if (buffer.hasRemaining()) {
@@ -285,25 +320,20 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 					} catch (IOException e) {
 						this.writeException = e;
 						this.close();
-						return true;
+						return ;
 					}
 					if (buffer.hasRemaining()) {
 						outputCache.offer(buffer);
 						this.setOpWrite();
-						return false;
-					}else{
-						return true;
 					}
 				}
 			} else {
 				outputCache.offer(buffer);
-				return false;
 			}
 		}
-		return true;
 	}
 
-	protected boolean write(ByteBuffer buffer, TaskCompletionHandler task) {
+	protected void write(ByteBuffer buffer, TaskCompletionHandler task) {
 		if (this.writeException == null) {
 			if (outputCache.isEmpty()) {
 				if (buffer.hasRemaining()) {
@@ -313,26 +343,23 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 						this.writeException = e;
 						executor.safeInvokeFailed(task, e);
 						this.close();
-						return true;
+						return ;
 					}
 					if (buffer.hasRemaining()) {
 						outputCache.offer(buffer, task);
 						this.setOpWrite();
-						return false;
+					}else{
+						executor.safeInvokeCompleted(task);
 					}
-					return true;
 				} else {
 					executor.safeInvokeCompleted(task);
-					return true;
 				}
 			} else {
 				outputCache.offer(buffer, task);
-				return false;
 			}
 		} else {
 			executor.safeInvokeFailed(task, this.writeException);
 		}
-		return true;
 	}
 
 	@Override

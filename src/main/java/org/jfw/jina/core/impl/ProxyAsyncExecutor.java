@@ -76,7 +76,6 @@ public  class ProxyAsyncExecutor extends Thread implements AsyncExecutor {
 				return ret;
 			}
 		}
-
 	}
 
 	@Override
@@ -105,7 +104,7 @@ public  class ProxyAsyncExecutor extends Thread implements AsyncExecutor {
 				// throw new IllegalStateException();
 				return;
 			} else if (s == 1) {
-				getOriginal().shutdown();
+				getOriginal().submit(task);
 				return;
 			} else {
 				if (STARTED_UPDATER.compareAndSet(this, 0, 1)) {

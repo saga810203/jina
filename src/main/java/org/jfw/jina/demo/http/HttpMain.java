@@ -1,9 +1,8 @@
 package org.jfw.jina.demo.http;
 
+import java.net.InetSocketAddress;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.SelectorProvider;
-import java.util.HashMap;
-import java.util.Map;
 
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncTask;
@@ -11,6 +10,7 @@ import org.jfw.jina.core.impl.AbstractAsyncServerChannel;
 import org.jfw.jina.core.impl.NioAsyncExecutorGroup;
 import org.jfw.jina.http.server.HttpAsyncExecutor;
 import org.jfw.jina.http.server.HttpChannel;
+import org.jfw.jina.http2.Http2AsyncExecutor;
 
 public class HttpMain {
 
@@ -18,7 +18,7 @@ public class HttpMain {
 		NioAsyncExecutorGroup boss = new NioAsyncExecutorGroup(1);
 		NioAsyncExecutorGroup worker = new NioAsyncExecutorGroup() {
 			public AsyncExecutor newChild(Runnable closeTask) {
-				return new HttpAsyncExecutor(this, closeTask, SelectorProvider.provider());
+				return new Http2AsyncExecutor(this, closeTask, SelectorProvider.provider());
 			}
 		};
 
@@ -39,7 +39,7 @@ public class HttpMain {
 
 					@Override
 					public void execute(AsyncExecutor executor) throws Throwable {
-						HttpChannel http = new HttpChannel((HttpAsyncExecutor )executor, channel);
+						HttpChannel<HttpAsyncExecutor> http = new HttpChannel<HttpAsyncExecutor>((HttpAsyncExecutor )executor, channel);
 						http.doRegister();
 					}
 
@@ -57,7 +57,7 @@ public class HttpMain {
 
 		};
 
-		server.start(null, 5);
+		server.start(new InetSocketAddress(91), 5);
 	}
 
 }

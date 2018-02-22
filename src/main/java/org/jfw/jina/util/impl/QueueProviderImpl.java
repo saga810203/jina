@@ -280,7 +280,7 @@ public class QueueProviderImpl implements QueueProvider {
 
 		@Override
 		public boolean isEmpty() {
-			return head.next != null;
+			return head.next == null;
 		}
 
 		@Override
@@ -558,7 +558,7 @@ public class QueueProviderImpl implements QueueProvider {
 
 		@Override
 		public boolean isEmpty() {
-			return head.next != null;
+			return head.next == null;
 		}
 
 		@Override
@@ -914,7 +914,7 @@ public class QueueProviderImpl implements QueueProvider {
 
 		@Override
 		public boolean isEmpty() {
-			return head.next != null;
+			return head.next == null;
 		}
 
 		@Override

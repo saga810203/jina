@@ -16,6 +16,7 @@ import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.http2.Http2AsyncExecutor;
 import org.jfw.jina.ssl.engine.JdkSslEngine;
+import org.jfw.jina.ssl.http.SslHttpAsyncChannel;
 import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.Queue;
 
@@ -251,7 +252,8 @@ public class SslAsyncChannel implements NioAsyncChannel {
 	}
 
 	private void swichHandle() {
-
+		this.delegatedChannel = new SslHttpAsyncChannel(executor, javaChannel, this);
+		this.key.attach(this.delegatedChannel);
 	}
 
 	private int packetLen = 0;

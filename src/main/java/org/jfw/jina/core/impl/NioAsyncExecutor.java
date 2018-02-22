@@ -459,6 +459,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 		// logger.warn("Unexpected exception in the selector loop.", t);
 		// Prevent possible consecutive immediate failures that lead to
 		// excessive CPU consumption.
+		t.printStackTrace();
 		try {
 			Thread.sleep(1000);
 		} catch (InterruptedException e) {

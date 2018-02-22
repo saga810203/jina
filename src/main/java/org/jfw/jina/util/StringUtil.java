@@ -243,7 +243,7 @@ public final class StringUtil {
 		}
 		return new String(chars, 0, len);
 	}public static String normalize(byte[]path,int begin,int end) {
-		char[] chars = new char[end-begin];
+		byte[] chars = new byte[end-begin];
 		System.arraycopy(path, begin,chars, 0,chars.length);		
 		int len = chars.length;
 		for (int i = 0; i < len; ++i) {
@@ -257,7 +257,7 @@ public final class StringUtil {
 			if ('/' != chars[i])
 				continue;
 			if (i + 1 < len) {
-				char c = chars[i + 1];
+				byte c = chars[i + 1];
 				if (c == '/') {
 					System.arraycopy(chars, i + 2, chars, i + 1, len - i - 2);
 					--len;
@@ -285,6 +285,6 @@ public final class StringUtil {
 				}
 			}
 		}
-		return new String(chars, 0, len);
+		return new String(chars, 0, len,StringUtil.US_ASCII);
 	}
 }

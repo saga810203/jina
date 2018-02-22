@@ -35,7 +35,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	private static final int HTTP_STATE_IGNORE = -1;
 
 	private DNode keepAliveNode;
-	private long keepAliveTimeout;
+	private long keepAliveTimeout= Long.MAX_VALUE;
 
 	protected HttpServerRequest request = null;
 	protected HttpServerResponse response = null;
@@ -516,8 +516,13 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			req.requestExecutor.execute(req, res);
 		} catch (Throwable e) {
 			if (res.state == HttpResponse.STATE_INIT) {
+				this.request = req;
+				this.response = res;
 				handleInternalException(e);
+				
 				IGRONE_EXECUTOR.execute(req, res);
+				this.request = null;
+				this.response = null;
 			} else {
 				this.close();
 				return;
@@ -535,7 +540,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		response.setStatus(HttpResponseStatus.INTERNAL_SERVER_ERROR);
 		response.unsafeContentLength(buf.length);
 		response.unsafeWrite(buf, 0, buf.length);
-		// response.unsafeFlush();
 		request.setRequestExecutor(IGRONE_EXECUTOR);
 	}
 
@@ -853,7 +857,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			if (null == headers.get(HttpConsts.CONTENT_LENGTH)) {
 				this.headers.set(HttpConsts.TRANSFER_ENCODING, HttpConsts.CHUNKED);
 			}
-			byte[] bs = hrs.getDefautContent();
+			byte[] bs = hrs.getReason();
 			byte[] lbs = ("HTTP/1.1 " + hrs.getCode() + ' ').getBytes(StringUtil.US_ASCII);
 			writeData(lbs, 0, lbs.length);
 			writeData(bs, 0, bs.length);

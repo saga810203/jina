@@ -2,6 +2,7 @@ package org.jfw.jina.core.impl;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.SocketOption;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
@@ -24,7 +25,7 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 	public static final Throwable CancledException = new IOException("start cancleed");
 
 	@SuppressWarnings("unused")
-	private int state = STATE_INIT;
+	private volatile int state = STATE_INIT;
 	protected ServerSocketChannel javaChannel;
 	private final AsyncExecutorGroup group;
 	private final AsyncExecutorGroup childGroup;
@@ -82,6 +83,7 @@ public abstract class AbstractAsyncServerChannel implements AsyncServerChannel {
 			try {
 				this.javaChannel = ServerSocketChannel.open();
 				this.javaChannel.configureBlocking(false);
+				this.javaChannel.socket().setReuseAddress(true);
 				this.config();
 				this.javaChannel.bind(address,
 						backlog > 0 ? backlog : SystemPropertyUtil.getInt("org.jfw.jina.util.concurrent.DefaultAsyncServerChannel.backlog", 5));

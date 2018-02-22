@@ -52,32 +52,32 @@ public class TestMain {
 		// writeMap(map);
 
 		// System.out.println(HttpRequest.HttpMethod.GET.toString());
-//		String c = "GET /test.html HTTP/1.1\r\n" + "Accept	:text/html,application/xhtml+xm…plication/xml;q=0.9,*/*;q=0.8\r\n"
-//				+ "Accept-Encoding:gzip, deflate\r\n" + "Accept-Language:zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2\r\n"
-//				+ "Cache-Control:max-age=0\r\n" + "Host:192.168.3.233\r\n" + "User-Agent:Mozilla/5.0 (Windows NT 6.1; W…) Gecko/20100101 Firefox/57.0\r\n"
-//				+ "\r\n";
-//		testSocket(c);
-//		ExecThread t = new ExecThread();
-//		t.start();
-//		Thread.sleep(10000);
-		
-		
+		// String c = "GET /test.html HTTP/1.1\r\n" + "Accept
+		// :text/html,application/xhtml+xm…plication/xml;q=0.9,*/*;q=0.8\r\n"
+		// + "Accept-Encoding:gzip, deflate\r\n" +
+		// "Accept-Language:zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2\r\n"
+		// + "Cache-Control:max-age=0\r\n" + "Host:192.168.3.233\r\n" +
+		// "User-Agent:Mozilla/5.0 (Windows NT 6.1; W…) Gecko/20100101
+		// Firefox/57.0\r\n"
+		// + "\r\n";
+		// testSocket(c);
+		// ExecThread t = new ExecThread();
+		// t.start();
+		// Thread.sleep(10000);
 
-		
 	}
 
-	public static class ExecThread extends Thread{
-		private int v =1243;
+	public static class ExecThread extends Thread {
+		private int v = 1243;
 
 		@Override
 		public void run() {
 			Thread thread = Thread.currentThread();
 			System.out.println(thread.getClass().getName());
 		}
-		
-		
+
 	}
-	
+
 	public static void countTime(Map<Object, Integer> map, Object key) {
 		Integer v = map.get(key);
 		if (v == null) {
@@ -120,7 +120,7 @@ public class TestMain {
 							break;
 						}
 						if (i < 0) {
-							System.out.print("success close"+(System.currentTimeMillis()-startTime));
+							System.out.print("success close" + (System.currentTimeMillis() - startTime));
 							break;
 						}
 						System.out.print((char) i);
@@ -134,7 +134,7 @@ public class TestMain {
 				out.write(buf[idx++]);
 			}
 			out.flush();
-		//	socket.shutdownOutput();
+			// socket.shutdownOutput();
 			lock.await();
 		} finally {
 			socket.close();
@@ -309,10 +309,17 @@ public class TestMain {
 					this.executor = executor;
 				}
 
-				public void requestBody(HttpRequest request, final InputBuf buf) {
-					while (buf.readable()) {
-						out.write(buf.readByte() & 0xFF);
-					}
+				// public void requestBody(HttpRequest request, final InputBuf
+				// buf) {
+				// while (buf.readable()) {
+				// out.write(buf.readByte() & 0xFF);
+				// }
+				// }
+
+				@Override
+				public void requestBody(HttpRequest request, byte[] buffer, int index, int length, boolean end) {
+					// TODO Auto-generated method stub
+
 				}
 
 				public void execute(HttpRequest request, HttpResponse response) {
@@ -338,35 +345,33 @@ public class TestMain {
 					try {
 						String r = new String(out.toByteArray(), "UTF-8");
 						byte[] bs = calc(r, f).getBytes("UTF-8");
-						OutputBuf buf = this.writeBytes(executor.allocBuffer(), bs, 0, bs.length, response);
-						response.flush(buf.input(), null);
-						buf.release();
+						response.flush(bs, 0, bs.length);
 					} catch (UnsupportedEncodingException e) {
 					}
 				}
 
-				protected OutputBuf writeBytes(OutputBuf buf, byte[] src, int srcIndex, int length, HttpResponse response) {
-					if (!buf.writable()) {
-						response.addBody(buf.input());
-						buf.release();
-						buf = executor.allocBuffer();
-					}
-					while (length > 0) {
-						int canWriteCount = buf.writableBytes();
-						if (length > canWriteCount) {
-							buf.writeBytes(src, srcIndex, canWriteCount);
-							srcIndex += canWriteCount;
-							length -= canWriteCount;
-							response.addBody(buf.input());
-							buf.release();
-							buf = executor.allocBuffer();
-						} else {
-							buf.writeBytes(src, srcIndex, length);
-							break;
-						}
-					}
-					return buf;
-				}
+//				protected OutputBuf writeBytes(OutputBuf buf, byte[] src, int srcIndex, int length, HttpResponse response) {
+//					if (!buf.writable()) {
+//						response.addBody(buf.input());
+//						buf.release();
+//						buf = executor.allocBuffer();
+//					}
+//					while (length > 0) {
+//						int canWriteCount = buf.writableBytes();
+//						if (length > canWriteCount) {
+//							buf.writeBytes(src, srcIndex, canWriteCount);
+//							srcIndex += canWriteCount;
+//							length -= canWriteCount;
+//							response.addBody(buf.input());
+//							buf.release();
+//							buf = executor.allocBuffer();
+//						} else {
+//							buf.writeBytes(src, srcIndex, length);
+//							break;
+//						}
+//					}
+//					return buf;
+//				}
 
 				@Override
 				public void error(HttpRequest request, int code) {
