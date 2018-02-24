@@ -4,7 +4,6 @@ import java.io.UnsupportedEncodingException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.http.HttpConsts;

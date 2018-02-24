@@ -3,6 +3,7 @@ package org.jfw.jina.ssl.http;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 import javax.net.ssl.SSLEngine;
@@ -32,16 +33,20 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 
 	public SslHttpAsyncChannel(Http2AsyncExecutor executor, SocketChannel javaChannel, SslAsyncChannel sslChannel) {
 		super(executor, javaChannel);
+		this.key = sslChannel.getSelectionKey();
 		this.byteArrayBuffer = executor.deCryptByteArray;
 		this.decryptBuffer = executor.deCryptBuffer;
-		copyOutQueue(sslChannel.getOutCache());
-		copyInQueue(sslChannel.getCacheUnwrapData());
+
 		this.sslReadBuffer = sslChannel.getSslReadBuffer();
 		this.sslRidx = sslChannel.getSslRidx();
 		this.sslWidx = sslChannel.getSslWidx();
 		this.sslCapacity = this.sslReadBuffer.capacity();
 		this.wrapEngine = sslChannel.getWrapSslEngine();
 		this.engine = this.wrapEngine.getWrappedEngine();
+		this.keepAliveNode = this.executor.newDNode(this);
+		this.addKeepAliveCheck();
+		copyOutQueue(sslChannel.getOutCache());
+		copyInQueue(sslChannel.getCacheUnwrapData());
 	}
 
 	private void copyInQueue(ByteArrayOutputStream buffer) {
@@ -119,13 +124,18 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 					// ByteBufUtil.hexDump(in));
 					this.close();
 					return;
-				} else if (dl < pl) {
+				} else {
 					this.packetLen = pl;
-					return;
+					if (dl < pl) {
+						return;
+					}
 				}
 			}
+			ByteBuffer tb = this.sslReadBuffer.duplicate();
+			tb.flip().position(this.sslRidx).limit(this.sslRidx + this.packetLen);
+			this.packetLen = 0;
 			try {
-				result = this.engine.unwrap((ByteBuffer) this.sslReadBuffer.duplicate().flip().position(this.sslRidx), this.rbuffer);
+				result = this.engine.unwrap(tb, this.rbuffer);
 			} catch (SSLException e) {
 				this.close();
 				return;
@@ -226,7 +236,7 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 		}
 		int idx = 0;
 		for (;;) {
-			if (idx > 3) {
+			if (idx >= 3) {
 				throw new RuntimeException("too large byteBuffer with wrap");
 			}
 			SSLEngineResult result = sslEngine.wrap(buffer, dest[idx]);
@@ -237,11 +247,44 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 					return idx;
 				}
 			} else if (state == SSLEngineResult.Status.BUFFER_OVERFLOW) {
+				ByteBuffer nb = ByteBuffer.allocate(dest[idx].capacity() << 1);
+				nb.clear();
 				dest[idx].flip();
-				++idx;
+				if (dest[idx].hasRemaining()) {
+					nb.put(dest[idx]);
+				}
+
+				dest[idx] = nb;
 			} else if (state == SSLEngineResult.Status.CLOSED) {
 				return -1;
 			}
+		}
+	}
+
+	protected static ByteBuffer wrap(SSLEngine engine, ByteBuffer buffer) throws SSLException {
+		if (buffer.hasRemaining()) {
+			ByteBuffer ret = ByteBuffer.allocate(8192);
+			for (;;) {
+				SSLEngineResult result = engine.wrap(buffer, ret);
+				SSLEngineResult.Status state = result.getStatus();
+				if (state == SSLEngineResult.Status.OK) {
+					if (!buffer.hasRemaining()) {
+						return ret;
+					}
+				} else if (state == SSLEngineResult.Status.BUFFER_OVERFLOW) {
+					ByteBuffer nb = ByteBuffer.allocate(ret.capacity() + 8192);
+					nb.order(ByteOrder.BIG_ENDIAN);
+					nb.clear();
+					if (ret.hasRemaining()) {
+						nb.put(ret);
+					}
+					ret = nb;
+				} else if (state == SSLEngineResult.Status.CLOSED) {
+					return null;
+				}
+			}
+		} else {
+			return buffer;
 		}
 	}
 
@@ -250,23 +293,20 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 	@Override
 	protected void write(ByteBuffer buffer) {
 		if (this.writeException == null) {
-			int ret = 0;
+			ByteBuffer ret = null;
 			try {
-				ret = wrap(engine, buffer, bufferArray);
+				ret = wrap(engine, buffer);
 			} catch (SSLException e) {
 				this.writeException = e;
 				this.close();
 				return;
 			}
-			if (ret < 0) {
+			if (ret == null) {
 				this.writeException = CLOSED_SSLENGINE_EXC;
 				this.close();
 				return;
 			}
-			for (int i = 0; i <= ret; ++i) {
-				super.write(bufferArray[i]);
-				bufferArray[i] = null;
-			}
+			super.write(ret);
 		}
 	}
 
@@ -274,26 +314,20 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 	protected void write(ByteBuffer buffer, TaskCompletionHandler task) {
 		if (this.writeException == null) {
 			if (buffer.hasRemaining()) {
-
-				int ret = 0;
+				ByteBuffer ret = null;
 				try {
-					ret = wrap(engine, buffer, bufferArray);
+					ret = wrap(engine, buffer);
 				} catch (SSLException e) {
 					this.writeException = e;
 					this.close();
 					return;
 				}
-				if (ret < 0) {
+				if (ret ==null) {
 					this.writeException = CLOSED_SSLENGINE_EXC;
 					this.close();
 					return;
 				}
-				for (int i = 0; i < ret; ++i) {
-					super.write(bufferArray[i]);
-					bufferArray[i] = null;
-				}
-				super.write(bufferArray[ret], task);
-				bufferArray[ret] = null;
+				super.write(ret, task);
 			} else {
 				super.write(buffer, task);
 			}
@@ -301,5 +335,4 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 			executor.safeInvokeFailed(task, this.writeException);
 		}
 	}
-
 }

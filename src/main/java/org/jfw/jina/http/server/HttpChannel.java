@@ -34,7 +34,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	private static final int HTTP_STATE_INVOKING = 90;
 	private static final int HTTP_STATE_IGNORE = -1;
 
-	private DNode keepAliveNode;
+	protected DNode keepAliveNode;
 	private long keepAliveTimeout= Long.MAX_VALUE;
 
 	protected HttpServerRequest request = null;

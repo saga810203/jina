@@ -319,6 +319,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 				}
 			}
 		} catch (Throwable t) {
+			t.printStackTrace();
 			handleLoopException(t);
 		}
 	}

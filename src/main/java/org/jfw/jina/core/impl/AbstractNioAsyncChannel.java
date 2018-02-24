@@ -17,7 +17,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 	protected T executor;
 	protected SocketChannel javaChannel;
-	private SelectionKey key;
+	protected SelectionKey key;
 	private final TagQueue<ByteBuffer, TaskCompletionHandler> outputCache;
 	private ByteBuffer cacheBuffer;
 	protected Throwable writeException;
@@ -70,31 +70,8 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.close();
 	}
 
-	private static final NioAsyncChannel NOOP_CHANNEL = new NioAsyncChannel(){
 
-		@Override
-		public void read() {
-		}
-
-		@Override
-		public void write() {
-		}
-
-		@Override
-		public void setSelectionKey(SelectionKey key) {
-		}
-
-		@Override
-		public void close() {
-		}
-
-		@Override
-		public void connected() {
-		}
-		
-	};
 	protected void closeJavaChannel() {
-		System.out.println("close java chanenl");
 		assert this.executor.inLoop();
 		SocketChannel jc = this.javaChannel;
 		SelectionKey k = this.key;
@@ -102,7 +79,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		this.key = null;
 		if (k != null) {
 			try {
-				k.attach(NOOP_CHANNEL);
+				k.interestOps(0);
 				k.cancel();
 			} catch (Exception e) {
 			}
@@ -301,13 +278,12 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 		assert task != null;
 		if (this.javaChannel != null) {
 			if (null == this.cacheBuffer) {
-				this.outputCache.offer(EMPTY_BUFFER, task);
+				this.write(EMPTY_BUFFER, task);
 			} else {
 				this.cacheBuffer.flip();
-				this.outputCache.offer(this.cacheBuffer, task);
+				this.write(this.cacheBuffer, task);
 				this.cacheBuffer = null;
 			}
-			this.setOpWrite();
 		}
 	}
 
@@ -364,11 +340,16 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 	@Override
 	public void write() {
-		TagNode tagNode = null;
-//		outputCache.peekTagNode();
-		while ((tagNode = outputCache.peekTagNode()) != null) {
+		for(;;){
+			TagNode tagNode = outputCache.peekTagNode();
+			if(tagNode==null){
+				if(this.key!=null){
+					this.cleanOpWrite();
+				}
+				return;
+			}
 			ByteBuffer buf = tagNode.item();
-			TaskCompletionHandler task = (TaskCompletionHandler) tagNode.tag();
+			TaskCompletionHandler task =tagNode.tag();
 			if (buf.hasRemaining()) {
 				try {
 					this.javaChannel.write(buf);
@@ -386,7 +367,6 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 				executor.safeInvokeCompleted(task);
 			}
 		}
-		this.cleanOpWrite();
 	}
 
 	@Override

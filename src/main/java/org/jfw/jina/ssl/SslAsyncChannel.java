@@ -1,6 +1,7 @@
 package org.jfw.jina.ssl;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.ClosedChannelException;
@@ -9,7 +10,6 @@ import java.nio.channels.SocketChannel;
 import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLEngineResult;
-import javax.net.ssl.SSLException;
 
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncTask;
@@ -38,28 +38,30 @@ public class SslAsyncChannel implements NioAsyncChannel {
 	private SelectionKey key;
 	private ByteArrayOutputStream cacheUnwrapData = new ByteArrayOutputStream();
 	private Queue<ByteBuffer> outQueue;
-	private ByteBuffer deCryptBuffer;
-	// private int deRidx;
-	// private int deWidx;
+	private Throwable writeException = null;
 
-	public SslAsyncChannel(SslContext context, boolean isClient, Http2AsyncExecutor executor,
-			SocketChannel javaChannel) {
+	public SslAsyncChannel(SslContext context, boolean isClient, Http2AsyncExecutor executor, SocketChannel javaChannel) {
 		this.wrapSslEngine = context.newEngine();
 		this.delegatedChannel = null;
 		this.isClient = isClient;
 		this.executor = executor;
 		this.javaChannel = javaChannel;
-		this.deCryptBuffer = executor.deCryptBuffer;
 		this.sslReadBuffer = ByteBuffer.allocate(8192);
 		this.sslReadBuffer.order(ByteOrder.BIG_ENDIAN);
 		this.sslRidx = this.sslWidx = 0;
 		this.sslCapacity = sslReadBuffer.capacity();
+		this.outQueue = executor.<ByteBuffer> newQueue();
 	}
 
 	public void doRegister() throws ClosedChannelException {
 		assert this.javaChannel != null;
-		this.key = this.javaChannel.register(this.executor.unwrappedSelector(),
-				SelectionKey.OP_READ | SelectionKey.OP_WRITE, this);
+		try {
+			this.javaChannel.configureBlocking(false);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		this.key = this.javaChannel.register(this.executor.unwrappedSelector(), SelectionKey.OP_READ | SelectionKey.OP_WRITE, this);
 		this.afterRegister();
 	}
 
@@ -70,6 +72,10 @@ public class SslAsyncChannel implements NioAsyncChannel {
 			applyHandshakeTimeout();
 		}
 
+	}
+
+	public SelectionKey getSelectionKey() {
+		return this.key;
 	}
 
 	private void applyHandshakeTimeout() {
@@ -120,9 +126,9 @@ public class SslAsyncChannel implements NioAsyncChannel {
 	}
 
 	private void compactSslReadBuffer() {
-		if(this.sslRidx== this.sslWidx){
+		if (this.sslRidx == this.sslWidx) {
 			this.sslReadBuffer.clear();
-		}else if(this.sslRidx>0 ){
+		} else if (this.sslRidx > 0) {
 			this.sslReadBuffer.flip();
 			this.sslReadBuffer.position(this.sslRidx);
 			this.sslReadBuffer.compact();
@@ -167,58 +173,59 @@ public class SslAsyncChannel implements NioAsyncChannel {
 				if (!unwrap()) {
 					return;
 				}
-				SSLEngineResult.HandshakeStatus state = this.wrapSslEngine.getHandshakeStatus();
-				switch (state) {
-					case FINISHED:
-						this.handshaked = true;
-						break;
-					case NEED_TASK:
-						for (;;) {
-							Runnable task = wrapSslEngine.getDelegatedTask();
-							if (task == null) {
-								break;
-							}
-							task.run();
-						}
-						break;
-					case NEED_UNWRAP: {
-						if (this.sslWidx == this.sslRidx) {
-							return;
-						}else{
+			}
+			SSLEngineResult.HandshakeStatus state = this.wrapSslEngine.getHandshakeStatus();
+			switch (state) {
+				case FINISHED:
+					this.handshaked = true;
+					break;
+				case NEED_TASK:
+					for (;;) {
+						Runnable task = wrapSslEngine.getDelegatedTask();
+						if (task == null) {
 							break;
 						}
+						task.run();
 					}
-					case NEED_WRAP:
-						try {
-							this.wrapNonAppData();
-						} catch (SSLException e) {
-							// TODO log and exit;
-							this.close();
-						}
+					break;
+				case NEED_UNWRAP: {
+					if (this.sslWidx == this.sslRidx) {
 						return;
-					case NOT_HANDSHAKING:
-						if (!this.handshaked) {
-							this.handshaked = true;
-						}
+					} else {
 						break;
-					default:
-						throw new IllegalStateException("Unknown handshake status: " + state);
-
+					}
 				}
-				if (handshaked) {
-					this.key.interestOps(0);
-					this.swichHandle();
+				case NEED_WRAP:
+					try {
+						this.wrapNonAppData();
+					} catch (Exception e) {
+						// TODO log and exit;
+						e.printStackTrace();
+						this.close();
+					}
 					return;
-				}
+				case NOT_HANDSHAKING:
+					if (!this.handshaked) {
+						this.handshaked = true;
+					}
+					break;
+				default:
+					throw new IllegalStateException("Unknown handshake status: " + state);
+
+			}
+			if (handshaked) {
+				this.key.interestOps(0);
+				this.swichHandle();
+				return;
 			}
 		}
+
 	}
 
 	public Queue<ByteBuffer> getOutCache() {
 		return this.outQueue;
 	}
 
-	
 	public ByteArrayOutputStream getCacheUnwrapData() {
 		return cacheUnwrapData;
 	}
@@ -260,7 +267,6 @@ public class SslAsyncChannel implements NioAsyncChannel {
 
 	private boolean unwrap() {
 		int sslReadableBytes = this.sslWidx - this.sslRidx;
-
 		if (packetLen > 0) {
 			if (sslReadableBytes < packetLen) {
 				return false;
@@ -276,79 +282,72 @@ public class SslAsyncChannel implements NioAsyncChannel {
 				// ByteBufUtil.hexDump(in));
 				this.close();
 				return false;
-			} else if (sslReadableBytes < pl) {
+			} else {
 				this.packetLen = pl;
-				return false;
+				if (sslReadableBytes < pl) {
+					return false;
+				}
 			}
 		}
-
-		ByteBuffer buf = (ByteBuffer) this.sslReadBuffer.duplicate().flip().position(this.sslRidx)
-				.limit(this.sslRidx + this.packetLen);
-		deCryptBuffer.clear();
-		SSLEngineResult result;
 		try {
-			result = this.wrapSslEngine.unwrap(buf, deCryptBuffer);
-		} catch (SSLException e) {
+			executor.unwrap(wrapSslEngine, this.sslReadBuffer, this.sslRidx, this.packetLen);
+		} catch (Throwable e) {
+			e.printStackTrace();
 			this.close();
 			return false;
 		}
-		int produced = result.bytesProduced();
-		int consumed = result.bytesConsumed();
-		this.sslRidx += consumed;
-
-		switch (result.getStatus()) {
-			case BUFFER_OVERFLOW:
-				// TODO log and gu exit IGNORE not happend
-				throw new RuntimeException("decrypt buffer too small");
-			case CLOSED:
-				this.close();
-				return false;
-			default:
-				break;
-		}
-		if (produced > 0) {
-			this.cacheUnwrapData(deCryptBuffer, produced);
+		this.packetLen = 0;
+		this.sslRidx += executor.bytesConsumed;
+		if (executor.bytesProduced > 0) {
+			this.cacheUnwrapData.write(executor.sslByteArray, 0, executor.bytesProduced);
 		}
 		return true;
 	}
 
-	public static ByteBuffer SSL_EMTPY_BUFFER = ByteBuffer.allocate(0);
-
-	private void wrapNonAppData() throws SSLException {
-		ByteBuffer buffer = null;
-		int packLength = 2048;
+	private void wrapNonAppData() throws Exception {
 		for (;;) {
-			if (buffer == null) {
-				buffer = ByteBuffer.allocate(2048);
-				packLength = 2048;
-			}
-			SSLEngineResult result = this.wrapSslEngine.wrap(SSL_EMTPY_BUFFER, buffer);
-			if (result.bytesProduced() > 0) {
-				buffer.flip();
-				this.outQueue.offer(buffer);
-				buffer = null;
-			}
-			if (result.getStatus() == SSLEngineResult.Status.BUFFER_OVERFLOW) {
-				packLength += 2048;
-				buffer = ByteBuffer.allocate(packLength);
-				continue;
-			}
-			if (result.bytesProduced() == 0) {
+			executor.wrapHandData(this.wrapSslEngine);
+			if (executor.bytesProduced > 0) {
+				this.flushData();
+			} else {
 				return;
 			}
 		}
 	}
 
-	private void cacheUnwrapData(ByteBuffer buffer, int len) {
-		byte[] bs = new byte[4096];
-		buffer.flip();
+	public void flushData() {
+		int idx = 0;
+		int len = executor.bytesProduced;
 		while (len > 0) {
-			int nl = Integer.min(len, 4096);
-			buffer.get(bs, 0, nl);
-			this.cacheUnwrapData.write(bs, 0, nl);
-			len -= nl;
+			int wl = len > 8192 ? 8192 : len;
+			ByteBuffer buffer = ByteBuffer.allocate(8192);
+			buffer.put(executor.sslByteArray, idx, wl);
+			idx += wl;
+			len -= wl;
+			buffer.flip();
+			this.write(buffer);
 		}
-		buffer.clear();
+	}
+
+	protected void write(ByteBuffer buffer) {
+		if (this.writeException == null) {
+			if (outQueue.isEmpty()) {
+				if (buffer.hasRemaining()) {
+					try {
+						this.javaChannel.write(buffer);
+					} catch (IOException e) {
+						this.writeException = e;
+						this.close();
+						return;
+					}
+					if (buffer.hasRemaining()) {
+						outQueue.offer(buffer);
+					}
+				}
+			} else {
+				outQueue.offer(buffer);
+			}
+		}
 	}
 
 	@Override

@@ -11,10 +11,16 @@ import org.jfw.jina.core.impl.NioAsyncExecutorGroup;
 import org.jfw.jina.http.server.HttpAsyncExecutor;
 import org.jfw.jina.http.server.HttpChannel;
 import org.jfw.jina.http2.Http2AsyncExecutor;
+import org.jfw.jina.ssl.SelfSignedCertificate;
+import org.jfw.jina.ssl.SslAsyncChannel;
+import org.jfw.jina.ssl.SslContext;
+import org.jfw.jina.ssl.SslContextBuilder;
 
 public class HttpMain {
 
 	public static void main(String[] args) throws Throwable {
+		final SelfSignedCertificate ssc = new SelfSignedCertificate();
+		final SslContext sslContext = SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey()).applicationProtocols("http/1.1") .build();
 		NioAsyncExecutorGroup boss = new NioAsyncExecutorGroup(1);
 		NioAsyncExecutorGroup worker = new NioAsyncExecutorGroup() {
 			public AsyncExecutor newChild(Runnable closeTask) {
@@ -29,6 +35,7 @@ public class HttpMain {
 					@Override
 					public void completed(AsyncExecutor executor) {
 					}
+
 					@Override
 					public void failed(Throwable exc, AsyncExecutor executor) {
 						try {
@@ -39,8 +46,15 @@ public class HttpMain {
 
 					@Override
 					public void execute(AsyncExecutor executor) throws Throwable {
-						HttpChannel<HttpAsyncExecutor> http = new HttpChannel<HttpAsyncExecutor>((HttpAsyncExecutor )executor, channel);
+						// HttpChannel<HttpAsyncExecutor> http = new
+						// HttpChannel<HttpAsyncExecutor>((HttpAsyncExecutor
+						// )executor, channel);
+						// http.doRegister();
+
+						
+						SslAsyncChannel http = new SslAsyncChannel(sslContext, false, (Http2AsyncExecutor) executor, channel);
 						http.doRegister();
+
 					}
 
 					@Override

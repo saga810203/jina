@@ -26,7 +26,6 @@ import javax.net.ssl.SSLSessionContext;
 import org.jfw.jina.ssl.engine.JdkSslEngine;
 import org.jfw.jina.ssl.engine.JettyAlpnSslEngine;
 
-
 public abstract class JdkSslContext extends SslContext {
 
 	public static final String PROTOCOL = "TLS";
@@ -85,8 +84,8 @@ public abstract class JdkSslContext extends SslContext {
 	private final SSLContext sslContext;
 	private final boolean isClient;
 
-	public JdkSslContext(SSLContext sslContext, boolean isClient, Iterable<String> ciphers, CipherSuiteFilter cipherFilter,
-			String[] protocols,String[] appcationProtocols) {
+	public JdkSslContext(SSLContext sslContext, boolean isClient, Iterable<String> ciphers, CipherSuiteFilter cipherFilter, String[] protocols,
+			String[] appcationProtocols) {
 		super();
 		cipherSuites = cipherFilter.filterCipherSuites(ciphers, DEFAULT_CIPHERS, SUPPORTED_CIPHERS);
 		this.protocols = protocols == null ? DEFAULT_PROTOCOLS : protocols;
@@ -134,25 +133,23 @@ public abstract class JdkSslContext extends SslContext {
 		return wrapSSLEngine(context().createSSLEngine());
 	}
 
-
-
-
 	@Override
 	public JdkSslEngine newEngine(String peerHost, int peerPort) {
-		return wrapSSLEngine(context().createSSLEngine(peerHost,peerPort));
+		return wrapSSLEngine(context().createSSLEngine(peerHost, peerPort));
 	}
 
 	protected JdkSslEngine wrapSSLEngine(SSLEngine engine) {
-        engine.setEnabledCipherSuites(cipherSuites);
-        engine.setEnabledProtocols(protocols);
-        boolean cliented = isClient();
-        if(cliented){
-        engine.setUseClientMode(true);
-        }else{
-        	engine.setWantClientAuth(false);
-        }
+		engine.setEnabledCipherSuites(cipherSuites);
+		engine.setEnabledProtocols(protocols);
+		boolean cliented = isClient();
+		if (cliented) {
+			engine.setUseClientMode(true);
+		} else {
+			engine.setUseClientMode(false);
+			engine.setWantClientAuth(false);
+		}
 		// return new Java9SslEngine(engine, applicationNegotiator, isServer);
-		return isClient ? JettyAlpnSslEngine.newClientEngine(engine,appcationProtocols) : JettyAlpnSslEngine.newServerEngine(engine, appcationProtocols);
+		return isClient ? JettyAlpnSslEngine.newClientEngine(engine, appcationProtocols) : JettyAlpnSslEngine.newServerEngine(engine, appcationProtocols);
 
 	}
 
