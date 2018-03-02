@@ -217,29 +217,38 @@ public class Http2Settings {
 		int ret = idx - ob;
 		dest[ob++] = 0;
 		dest[ob++] = 0;
-		dest[ob++] = (byte) (ret-9);
+		dest[ob++] = (byte) (ret - 9);
 		return ret;
 	}
 
-	// protected String keyToString(char key) {
-	// switch (key) {
-	// case SETTINGS_HEADER_TABLE_SIZE:
-	// return "HEADER_TABLE_SIZE";
-	// case SETTINGS_ENABLE_PUSH:
-	// return "ENABLE_PUSH";
-	// case SETTINGS_MAX_CONCURRENT_STREAMS:
-	// return "MAX_CONCURRENT_STREAMS";
-	// case SETTINGS_INITIAL_WINDOW_SIZE:
-	// return "INITIAL_WINDOW_SIZE";
-	// case SETTINGS_MAX_FRAME_SIZE:
-	// return "MAX_FRAME_SIZE";
-	// case SETTINGS_MAX_HEADER_LIST_SIZE:
-	// return "MAX_HEADER_LIST_SIZE";
-	// default:
-	// // Unknown keys.
-	// return Character.toString(key);
-	// }
-	// }
+	protected String keyToString(char key) {
+		switch (key) {
+			case SETTINGS_HEADER_TABLE_SIZE:
+				return "HEADER_TABLE_SIZE";
+			case SETTINGS_ENABLE_PUSH:
+				return "ENABLE_PUSH";
+			case SETTINGS_MAX_CONCURRENT_STREAMS:
+				return "MAX_CONCURRENT_STREAMS";
+			case SETTINGS_INITIAL_WINDOW_SIZE:
+				return "INITIAL_WINDOW_SIZE";
+			case SETTINGS_MAX_FRAME_SIZE:
+				return "MAX_FRAME_SIZE";
+			case SETTINGS_MAX_HEADER_LIST_SIZE:
+				return "MAX_HEADER_LIST_SIZE";
+			default:
+				// Unknown keys.
+				return Character.toString(key);
+		}
+	}
+	public String toString(){
+		StringBuilder sb = new StringBuilder();
+		sb.append("Http2Setting==>{");
+		for(int i =1 ; i < 7; ++i){
+			sb.append(this.keyToString((char)i)).append(":").append(this.config[i]).append(",");
+		}
+		sb.setCharAt(sb.length()-1, '}');
+		return sb.toString();
+	}
 
 	public static boolean isMaxFrameSizeValid(long maxFrameSize) {
 		return maxFrameSize >= MAX_FRAME_SIZE_LOWER_BOUND && maxFrameSize <= MAX_FRAME_SIZE_UPPER_BOUND;

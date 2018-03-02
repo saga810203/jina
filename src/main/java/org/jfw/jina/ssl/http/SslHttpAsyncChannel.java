@@ -1,28 +1,23 @@
 package org.jfw.jina.ssl.http;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
 import javax.net.ssl.SSLEngine;
-import javax.net.ssl.SSLEngineResult;
 import javax.net.ssl.SSLException;
 
 import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.http.server.HttpChannel;
 import org.jfw.jina.http2.Http2AsyncExecutor;
+import org.jfw.jina.log.LogFactory;
+import org.jfw.jina.log.Logger;
 import org.jfw.jina.ssl.SslAsyncChannel;
 import org.jfw.jina.ssl.SslUtil;
 import org.jfw.jina.ssl.engine.JdkSslEngine;
-import org.jfw.jina.util.Queue;
+import org.jfw.jina.util.Handler;
 
 public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
-
-	private final byte[] byteArrayBuffer;
-	private final ByteBuffer decryptBuffer;
-
+	private static final Logger LOG = LogFactory.getLog(SslHttpAsyncChannel.class);
 	protected ByteBuffer sslReadBuffer;
 	protected int sslCapacity;
 	protected int sslRidx;
@@ -31,12 +26,12 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 	private JdkSslEngine wrapEngine;
 	private SSLEngine engine;
 
+	private final ByteBuffer clearCacheBuffer = ByteBuffer.allocate(8192);
+//	private final byte[] clearByteArray = clearCacheBuffer.array();
+
 	public SslHttpAsyncChannel(Http2AsyncExecutor executor, SocketChannel javaChannel, SslAsyncChannel sslChannel) {
 		super(executor, javaChannel);
 		this.key = sslChannel.getSelectionKey();
-		this.byteArrayBuffer = executor.deCryptByteArray;
-		this.decryptBuffer = executor.deCryptBuffer;
-
 		this.sslReadBuffer = sslChannel.getSslReadBuffer();
 		this.sslRidx = sslChannel.getSslRidx();
 		this.sslWidx = sslChannel.getSslWidx();
@@ -44,25 +39,8 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 		this.wrapEngine = sslChannel.getWrapSslEngine();
 		this.engine = this.wrapEngine.getWrappedEngine();
 		this.keepAliveNode = this.executor.newDNode(this);
-		this.addKeepAliveCheck();
-		copyOutQueue(sslChannel.getOutCache());
-		copyInQueue(sslChannel.getCacheUnwrapData());
-	}
-
-	private void copyInQueue(ByteArrayOutputStream buffer) {
-		int len = buffer.size();
-		byte[] bds = buffer.toByteArray();
-		int bidx = 0;
-		while (len > 0) {
-			int dl = Integer.min(len, rbuffer.capacity());
-			rbuffer.clear();
-			rbuffer.put(bds, bidx, dl);
-			this.ridx = 0;
-			this.widx = dl;
-			this.handleRead(dl);
-			bidx += dl;
-			len -= dl;
-		}
+		this.outputCache.free(Handler.NOOP);
+		this.outputCache = sslChannel.getOutCache();
 	}
 
 	private void compactSslReadBuffer() {
@@ -87,97 +65,57 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 		this.sslReadBuffer = buffer;
 	}
 
-	private void copyOutQueue(Queue<ByteBuffer> queue) {
-		for (;;) {
-			ByteBuffer buf = queue.poll();
-			if (buf != null) {
-				while (buf.hasRemaining()) {
-					int len = Integer.min(buf.remaining(), byteArrayBuffer.length);
-					buf.get(byteArrayBuffer, 0, len);
-					super.writeData(byteArrayBuffer, 0, len);
-				}
-			} else {
-				break;
-			}
-		}
-	}
-
 	private int packetLen;
 
 	private void unwrap() {
-		SSLEngineResult result = null;
-		SSLEngineResult.Status state = null;
 		for (;;) {
 			int dl = this.sslWidx - this.sslRidx;
+			assert LOG.debug(this.channelId + " packetLen == " + this.packetLen + " dl == " + dl);
 			if (this.packetLen > 0) {
 				if (dl < this.packetLen) {
 					break;
 				}
 			} else {
 				if (dl < SslUtil.SSL_RECORD_HEADER_LENGTH) {
-					return;
+					break;
 				}
 				int pl = SslUtil.getEncryptedPacketLength(this.sslReadBuffer, this.sslRidx);
 				if (pl == SslUtil.NOT_ENCRYPTED) {
-					// Not an SSL/TLS packet
-					// TODO : log "not an SSL/TLS record: " +
-					// ByteBufUtil.hexDump(in));
+					if (LOG.enableWarn()) {
+						LOG.warn(this.channelId + " invalid ssl record length:" + pl);
+					}
+					this.writeException = new RuntimeException("invalid ssl record length");
 					this.close();
 					return;
 				} else {
 					this.packetLen = pl;
 					if (dl < pl) {
-						return;
+						break;
 					}
 				}
 			}
-			ByteBuffer tb = this.sslReadBuffer.duplicate();
-			tb.flip().position(this.sslRidx).limit(this.sslRidx + this.packetLen);
-			this.packetLen = 0;
 			try {
-				result = this.engine.unwrap(tb, this.rbuffer);
-			} catch (SSLException e) {
+				this.executor.unwrap(this.engine, this.sslReadBuffer, this.sslRidx, packetLen);
+			} catch (Exception e) {
+				if (LOG.enableWarn()) {
+					LOG.warn(this.channelId + " unwrap error", e);
+				}
+				this.writeException = e;
 				this.close();
 				return;
 			}
-			this.sslRidx += result.bytesConsumed();
-			this.widx += result.bytesProduced();
-			int len = this.widx - this.ridx;
-			state = result.getStatus();
-			switch (state) {
-				case BUFFER_OVERFLOW: {
-					if (len > 0) {
-						this.handleRead(len);
-						this.compactReadBuffer();
-					} else {
-						this.close();
-						// TODO :
-						throw new RuntimeException("ssl package length to large");
-					}
-					break;
-				}
-				case BUFFER_UNDERFLOW: {
-					if (this.sslRidx > 0) {
-						this.compactSslReadBuffer();
-					} else {
-						this.close();
-						throw new RuntimeException("ssl package length to large");
-					}
-					break;
-				}
-				case CLOSED:
-					if (len > 0) {
-						this.handleRead(len);
-						this.handleInputClose();
-						return;
-					}
-					return;
-				default:
-					break;
+			this.packetLen = 0;
+			this.sslRidx += executor.bytesConsumed;
+			int produced = executor.bytesProduced;
+			if (produced > 0) {
+				this.ensureCapacity4ReadBuffer(produced);
+				this.rbuffer.put(executor.sslByteArray, 0, produced);
+				this.widx += produced;
 			}
-
 		}
-
+		int len = this.widx - this.ridx;
+		if (len > 0)
+			this.handleRead(len);
 	}
 
 	@Override
@@ -187,6 +125,9 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 			try {
 				len = this.javaChannel.read(sslReadBuffer);
 			} catch (Throwable e) {
+				if(LOG.enableWarn()){
+					LOG.warn(this.channelId+" read os buffer error",e);
+				}
 				this.close();
 				return;
 			}
@@ -194,7 +135,10 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 				break;
 			} else if (len < 0) {
 				unwrap();
-				this.handleInputClose();
+				if (this.writeException == null) {
+					this.cleanOpRead();
+					this.handleInputClose();
+				}
 				return;
 			}
 			this.sslWidx += len;
@@ -212,127 +156,135 @@ public class SslHttpAsyncChannel extends HttpChannel<Http2AsyncExecutor> {
 	@Override
 	public void close() {
 		super.close();
-		if (this.wrapEngine != null)
+		if (this.wrapEngine != null) {
 			try {
 				this.wrapEngine.closeInbound();
 			} catch (SSLException e) {
 			}
-		this.wrapEngine.closeOutbound();
-		this.wrapEngine = null;
-		this.engine = null;
+			this.wrapEngine.closeOutbound();
+
+			this.wrapEngine = null;
+			this.engine = null;
+		}
 	}
 
-	private final ByteBuffer[] bufferArray = new ByteBuffer[3];
-
-	protected static int wrap(SSLEngine sslEngine, ByteBuffer buffer, ByteBuffer[] dest) throws SSLException {
-		for (int i = 0; i < 3; i++) {
-			if (dest[i] == null) {
-				dest[i] = ByteBuffer.allocate(8192);
-				dest[i].order(ByteOrder.BIG_ENDIAN);
-				dest[i].clear();
+	protected void wrapAndWriteCacheClear() {
+		this.clearCacheBuffer.flip();
+		for (;;) {
+			int remaining = this.clearCacheBuffer.remaining();
+			if (remaining > 0) {
+				try {
+					executor.wrap(engine, this.clearCacheBuffer);
+				} catch (Throwable e) {
+					if(LOG.enableWarn()){
+						LOG.warn(this.channelId+" wrap data error", e);
+					}
+					this.writeException = e;
+					this.clearCacheBuffer.clear();
+					this.close();
+					return;
+				}
+				this.clearCacheBuffer.clear();
+				super.writeData(executor.sslByteArray, 0, executor.bytesProduced);
 			} else {
+				this.clearCacheBuffer.clear();
+				return;
+			}
+		}
+	}
+
+	protected void flushAndWriteCacheClear(TaskCompletionHandler task) {
+		this.clearCacheBuffer.flip();
+		for (;;) {
+			int remaining = this.clearCacheBuffer.remaining();
+			if (remaining > 0) {
+				try {
+					executor.wrap(engine, this.clearCacheBuffer);
+				} catch (Throwable e) {
+					e.printStackTrace();
+					this.writeException = e;
+					this.clearCacheBuffer.clear();
+					this.outputCache.offer(Http2AsyncExecutor.SSL_EMTPY_BUFFER, task);
+					this.close();
+					return;
+				}
+				this.clearCacheBuffer.clear();
+				super.flushData(executor.sslByteArray, 0, executor.bytesProduced, task);
+				return;
+			} else {
+				this.clearCacheBuffer.clear();
+				super.flushData(task);
+				return;
+			}
+		}
+	}
+
+	@Override
+	protected void writeData(byte[] buf, int index, int len) {
+		while (len > 0) {
+			if (this.writeException != null) {
 				break;
 			}
-		}
-		int idx = 0;
-		for (;;) {
-			if (idx >= 3) {
-				throw new RuntimeException("too large byteBuffer with wrap");
+			int remaining = this.clearCacheBuffer.remaining();
+			if (remaining == 0) {
+				wrapAndWriteCacheClear();
+				continue;
 			}
-			SSLEngineResult result = sslEngine.wrap(buffer, dest[idx]);
-			SSLEngineResult.Status state = result.getStatus();
-			if (state == SSLEngineResult.Status.OK) {
-				if (!buffer.hasRemaining()) {
-					dest[idx].flip();
-					return idx;
-				}
-			} else if (state == SSLEngineResult.Status.BUFFER_OVERFLOW) {
-				ByteBuffer nb = ByteBuffer.allocate(dest[idx].capacity() << 1);
-				nb.clear();
-				dest[idx].flip();
-				if (dest[idx].hasRemaining()) {
-					nb.put(dest[idx]);
-				}
-
-				dest[idx] = nb;
-			} else if (state == SSLEngineResult.Status.CLOSED) {
-				return -1;
-			}
+			int wl = Integer.min(len, remaining);
+			this.clearCacheBuffer.put(buf, index, wl);
+			index += wl;
+			len -= wl;
 		}
 	}
 
-	protected static ByteBuffer wrap(SSLEngine engine, ByteBuffer buffer) throws SSLException {
-		if (buffer.hasRemaining()) {
-			ByteBuffer ret = ByteBuffer.allocate(8192);
+	@Override
+	protected void writeByteData(byte value) {
+		if (this.writeException != null)
+			return;
+		int remaining = this.clearCacheBuffer.remaining();
+		if (remaining == 0) {
+			wrapAndWriteCacheClear();
+			if (this.writeException == null) {
+				this.clearCacheBuffer.put(value);
+			}
+		} else {
+			this.clearCacheBuffer.put(value);
+		}
+	}
+
+	@Override
+	protected void flushData(byte[] buf, int index, int len, TaskCompletionHandler task) {
+		assert buf != null;
+		assert index >= 0;
+		assert len > 0;
+		assert buf.length >= (index + len);
+		if (this.javaChannel != null) {
 			for (;;) {
-				SSLEngineResult result = engine.wrap(buffer, ret);
-				SSLEngineResult.Status state = result.getStatus();
-				if (state == SSLEngineResult.Status.OK) {
-					if (!buffer.hasRemaining()) {
-						return ret;
-					}
-				} else if (state == SSLEngineResult.Status.BUFFER_OVERFLOW) {
-					ByteBuffer nb = ByteBuffer.allocate(ret.capacity() + 8192);
-					nb.order(ByteOrder.BIG_ENDIAN);
-					nb.clear();
-					if (ret.hasRemaining()) {
-						nb.put(ret);
-					}
-					ret = nb;
-				} else if (state == SSLEngineResult.Status.CLOSED) {
-					return null;
+				if (this.writeException != null) {
+					break;
+				}
+				int remaining = this.clearCacheBuffer.remaining();
+				if (remaining == 0) {
+					wrapAndWriteCacheClear();
+					continue;
+				}
+				int wl = Integer.min(len, remaining);
+				this.clearCacheBuffer.put(buf, index, wl);
+				index += wl;
+				len -= wl;
+				if (len == 0) {
+					flushAndWriteCacheClear(task);
+					return;
 				}
 			}
 		} else {
-			return buffer;
-		}
-	}
-
-	private static final Exception CLOSED_SSLENGINE_EXC = new Exception("SSLEngine is closed");
-
-	@Override
-	protected void write(ByteBuffer buffer) {
-		if (this.writeException == null) {
-			ByteBuffer ret = null;
-			try {
-				ret = wrap(engine, buffer);
-			} catch (SSLException e) {
-				this.writeException = e;
-				this.close();
-				return;
-			}
-			if (ret == null) {
-				this.writeException = CLOSED_SSLENGINE_EXC;
-				this.close();
-				return;
-			}
-			super.write(ret);
+			task.failed(this.writeException, executor);
 		}
 	}
 
 	@Override
-	protected void write(ByteBuffer buffer, TaskCompletionHandler task) {
-		if (this.writeException == null) {
-			if (buffer.hasRemaining()) {
-				ByteBuffer ret = null;
-				try {
-					ret = wrap(engine, buffer);
-				} catch (SSLException e) {
-					this.writeException = e;
-					this.close();
-					return;
-				}
-				if (ret ==null) {
-					this.writeException = CLOSED_SSLENGINE_EXC;
-					this.close();
-					return;
-				}
-				super.write(ret, task);
-			} else {
-				super.write(buffer, task);
-			}
-		} else {
-			executor.safeInvokeFailed(task, this.writeException);
-		}
+	protected void flushData(TaskCompletionHandler task) {
+		this.flushAndWriteCacheClear(task);
 	}
+
 }

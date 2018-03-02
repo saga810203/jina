@@ -25,6 +25,10 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 	int sendWindowSize;
 	int id;
 	byte state;
+	
+	protected int resState = HttpResponse.STATE_INIT;
+	protected DefaultHttpHeaders resHeaders;
+	protected HttpResponseStatus resStatus = HttpResponseStatus.OK;
 
 	Frame first = null;
 	Frame last = null;
@@ -36,6 +40,7 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 	public ServerHttp2Stream(Http2ServerConnection<? extends Http2AsyncExecutor> connection, int windowSize) {
 		this.connection = connection;
 		this.initWindowSize = windowSize;
+		this.resHeaders = new DefaultHttpHeaders();
 	}
 
 	@Override
@@ -91,9 +96,7 @@ public class ServerHttp2Stream implements Http2Stream, HttpRequest, HttpResponse
 		}
 	}
 
-	protected int resState = HttpResponse.STATE_INIT;
-	protected DefaultHttpHeaders resHeaders;
-	protected HttpResponseStatus resStatus = HttpResponseStatus.OK;
+
 
 	@Override
 	public int state() {

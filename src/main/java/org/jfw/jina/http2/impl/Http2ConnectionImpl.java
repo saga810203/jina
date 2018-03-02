@@ -10,6 +10,7 @@ import org.jfw.jina.util.Matcher;
 
 public abstract class Http2ConnectionImpl<T extends Http2Stream, H extends Http2AsyncExecutor> extends Http2FrameWriter<H> {
 
+	protected Http2Settings localSettings;
 	protected DQueue<T>[] streams;
 
 	protected int streamHashNum;
@@ -20,10 +21,12 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream, H extends Http2
 		assert streamHashNum == 1 || streamHashNum == 3 || streamHashNum == 7 || streamHashNum == 15 || streamHashNum == 31 || streamHashNum == 63
 				|| streamHashNum == 127;
 		this.streamHashNum = streamHashNum;
-		this.streams = (DQueue<T>[]) new Object[streamHashNum + 1];
+		
+		this.streams = (DQueue[]) new DQueue[streamHashNum + 1];
 		for (int i = 0; i <= streamHashNum; ++i) {
 			streams[i] = executor.<T> newDQueue();
 		}
+		this.localSettings = settings;
 	}
 
 	public Http2ConnectionImpl(H executor, SocketChannel javaChannel, Http2Settings settings) {
@@ -99,5 +102,8 @@ public abstract class Http2ConnectionImpl<T extends Http2Stream, H extends Http2
 		}
 
 	}
-
+	@Override
+	public void recvSettingAck() {
+		this.configLocal(this.localSettings);
+	}
 }

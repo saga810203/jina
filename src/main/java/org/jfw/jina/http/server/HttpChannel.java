@@ -17,11 +17,14 @@ import org.jfw.jina.http.impl.DefaultHttpHeaders;
 import org.jfw.jina.http.impl.DefaultHttpParameters;
 import org.jfw.jina.http.server.HttpRequest.HttpMethod;
 import org.jfw.jina.http.server.HttpRequest.RequestExecutor;
+import org.jfw.jina.log.LogFactory;
+import org.jfw.jina.log.Logger;
 import org.jfw.jina.util.DQueue.DNode;
 import org.jfw.jina.util.StringUtil;
+import org.jfw.jina.util.impl.QueueProviderImpl.LinkedNode;
 
 public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncChannel<T> implements KeepAliveCheck {
-
+	private static final Logger LOG = LogFactory.getLog(HttpChannel.class);
 	private static final int HTTP_STATE_SKIP_CONTROL_CHARS = 10;
 	private static final int HTTP_STATE_READ_INITIAL = 20;
 	private static final int HTTP_STATE_READ_HEADER = 30;
@@ -35,7 +38,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	private static final int HTTP_STATE_IGNORE = -1;
 
 	protected DNode keepAliveNode;
-	private long keepAliveTimeout= Long.MAX_VALUE;
+	private long keepAliveTimeout = Long.MAX_VALUE;
 
 	protected HttpServerRequest request = null;
 	protected HttpServerResponse response = null;
@@ -69,9 +72,11 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	public boolean removeKeepAliveCheck() {
 		if (this.keepAliveTimeout != Long.MAX_VALUE) {
 			this.keepAliveTimeout = Long.MAX_VALUE;
-			this.keepAliveNode.dequeue();
+			this.keepAliveNode.dequeue(this.executor.getKeepAliveQueue());
+			assert LOG.debug(this.channelId + " invoke removeKeepAliveCheck() return true");
 			return true;
 		}
+		assert LOG.debug(this.channelId + " invoke removeKeepAliveCheck() return false");
 		return false;
 	}
 
@@ -79,8 +84,11 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		if (this.keepAliveTimeout == Long.MAX_VALUE) {
 			this.keepAliveTimeout = System.currentTimeMillis();
 			this.keepAliveNode.enqueue(this.executor.getKeepAliveQueue());
+			assert LOG.debug(this.channelId+" executor.getKeepAliveQueue().isEmpty():"+this.executor.getKeepAliveQueue().isEmpty());
+			assert LOG.debug(this.channelId + " invoke addKeepAliveCheck() return true");
 			return true;
 		}
+		assert LOG.debug(this.channelId + " invoke addKeepAliveCheck() return false");
 		return false;
 	}
 
@@ -108,30 +116,39 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	};
 
 	protected boolean handleFixLenthRead() {
+		assert LOG.debug(this.channelId + " widx ==" + widx);
+		assert LOG.debug(this.channelId + " ridx ==" + ridx);
+		assert LOG.debug(this.channelId + " chunkSize ==" + chunkSize);
 		if (chunkSize == 0) {
 			this.requestBodyRead(0, true);
 			this.compactReadBuffer();
 			this.requestInvoke();
+			assert LOG.debug(this.channelId + " will return true");
 			return true;
 		}
 		int nr = this.widx - this.ridx;
 		if (nr == 0) {
 			this.clearReadBuffer();
+			assert LOG.debug(this.channelId + " will return false");
 			return false;
 		} else if (nr > chunkSize) {
 			this.requestBodyRead((int) chunkSize, true);
 			this.ridx += chunkSize;
 			this.compactReadBuffer();
+			this.requestInvoke();
+			assert LOG.debug(this.channelId + " will return true");
 			return true;
 		} else if (chunkSize == nr) {
 			this.requestBodyRead(nr, true);
 			this.clearReadBuffer();
 			this.requestInvoke();
+			assert LOG.debug(this.channelId + " will return true");
 			return true;
 		} else {
 			this.requestBodyRead(nr, false);
 			this.clearReadBuffer();
 			chunkSize -= nr;
+			assert LOG.debug(this.channelId + " will return false");
 			return false;
 		}
 
@@ -140,8 +157,11 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	@Override
 	public void close() {
 		this.removeKeepAliveCheck();
-		this.executor.freeDNode(this.keepAliveNode);
-		this.keepAliveNode = null;
+		if (this.keepAliveNode != null) {
+			((LinkedNode) this.keepAliveNode).item = null;
+			this.executor.freeDNode(this.keepAliveNode);
+			this.keepAliveNode = null;
+		}
 		this.closeJavaChannel();
 	}
 
@@ -159,7 +179,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		int colonEnd;
 		int valueStart;
 		int valueEnd;
-
 		nameStart = StringUtil.findNonWhitespace(this.rBytes, start, lineEnd);
 		for (nameEnd = nameStart; nameEnd < lineEnd; nameEnd++) {
 			byte ch = rBytes[nameEnd];
@@ -167,7 +186,6 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				break;
 			}
 		}
-
 		for (colonEnd = nameEnd; colonEnd < lineEnd; colonEnd++) {
 			if (rBytes[colonEnd] == ':') {
 				colonEnd++;
@@ -282,6 +300,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		// AppendableCharSequence line = headerParser.parse(buffer);
 		int start = parseLine();
 		if (start < 0) {
+			assert LOG.debug(this.channelId+" will return false");
 			return false;
 		} else if (start == Integer.MAX_VALUE) {
 			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_FOOTER);
@@ -330,6 +349,8 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	private long chunkSize = 0;
 
 	protected void handleInvalidHttpresutst(HttpResponseStatus error) {
+		assert LOG.debug(this.channelId+" error=="+error.getCode()+" "+error.getReason());
+		assert LOG.debug(this.channelId+" (currentState == HTTP_STATE_IGNORE) is "+(this.currentState = HTTP_STATE_IGNORE));
 		if (this.currentState != HTTP_STATE_IGNORE) {
 			if (this.request != null) {
 				request.requestExecutor.error(request, error.getCode());
@@ -386,9 +407,9 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		if (start == Integer.MAX_VALUE) {
 			this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_URI_TOO_LONG);
 			this.clearReadBuffer();
+			assert LOG.debug(this.channelId+" will return true");
 			return true;
 		}
-
 		HttpMethod method = null;
 		start = StringUtil.findNonWhitespace(this.rBytes, start, lineEnd);
 		if (start >= lineEnd) {
@@ -472,7 +493,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
 			return true;
 		}
-
+		System.out.println("URI:" + uri);
 		start = StringUtil.findNonWhitespace(rBytes, fEnd, lineEnd);
 		if (start >= lineEnd) {
 			this.handleInvalidHttpresutst(HttpResponseStatus.BAD_REQUEST);
@@ -494,6 +515,9 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			service.service(request);
 			request.requestExecutor.setAsyncExecutor(executor);
 		} catch (Throwable e) {
+			if(LOG.enableWarn()){
+				LOG.warn(this.channelId+" invoke configRequest error", e);
+			}
 			handleInternalException(e);
 		}
 	}
@@ -502,6 +526,9 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		try {
 			request.requestExecutor.requestBody(this.request, this.rBytes, this.ridx, len, end);
 		} catch (Throwable e) {
+			if(LOG.enableWarn()){
+				LOG.warn(this.channelId+" invoke requestBodyRead("+len+","+end+") error", e);
+			}
 			handleInternalException(e);
 		}
 	}
@@ -515,11 +542,13 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		try {
 			req.requestExecutor.execute(req, res);
 		} catch (Throwable e) {
+			if(LOG.enableWarn()){
+				LOG.warn(this.channelId+" invoke requestInvoke", e);
+			}
 			if (res.state == HttpResponse.STATE_INIT) {
 				this.request = req;
 				this.response = res;
 				handleInternalException(e);
-				
 				IGRONE_EXECUTOR.execute(req, res);
 				this.request = null;
 				this.response = null;
@@ -535,8 +564,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		StringWriter sw = new StringWriter();
 		PrintWriter pw = new PrintWriter(sw);
 		e.printStackTrace(pw);
-		buf = StringUtil
-				.utf8(HttpResponseStatus.buildHtmlPage(HttpResponseStatus.INTERNAL_SERVER_ERROR, sw.toString()));
+		buf = StringUtil.utf8(HttpResponseStatus.buildHtmlPage(HttpResponseStatus.INTERNAL_SERVER_ERROR, sw.toString()));
 		response.setStatus(HttpResponseStatus.INTERNAL_SERVER_ERROR);
 		response.unsafeContentLength(buf.length);
 		response.unsafeWrite(buf, 0, buf.length);
@@ -549,10 +577,12 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			if (!Character.isISOControl(c) && !Character.isWhitespace(c)) {
 				ridx--;
 				currentState = HTTP_STATE_READ_INITIAL;
+				assert LOG.debug(this.channelId +" will return true");
 				return true;
 			}
 		}
 		this.clearReadBuffer();
+		assert LOG.debug(this.channelId +" will return false");
 		return false;
 	}
 
@@ -568,6 +598,9 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 		try {
 			return Integer.parseInt(hex, 16);
 		} catch (NumberFormatException e) {
+			if(LOG.enableWarn()){
+				LOG.warn(this.channelId+" invalid chunksize:"+hex,e);
+			}
 			return Integer.MIN_VALUE;
 		}
 	}
@@ -577,16 +610,20 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			if (currentState == HTTP_STATE_READ_CHUNK_SIZE) {
 				int start = this.parseLine();
 				if (start < 0) {
+					assert LOG.debug(this.channelId+" read chunkSize data fail");
 					return false;
 				} else if (start == Integer.MAX_VALUE) {
 					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
+					assert LOG.debug(this.channelId+" read chunkSize data error");
 					return true;
 				}
+				assert LOG.debug(this.channelId+" read chunkSize data success ");
 				this.chunkSize = getChunkSize(start);
 				if (chunkSize == Integer.MIN_VALUE) {
 					this.handleInvalidHttpresutst(HttpResponseStatus.REQUEST_INVALID_CHUNKED_SIZE);
 					return true;
 				}
+				assert LOG.debug(this.channelId+" read chunkSize is "+this.chunkSize);
 				if (chunkSize == 0) {
 					currentState = HTTP_STATE_READ_CHUNK_FOOTER;
 				} else {
@@ -602,14 +639,17 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 					this.currentState = HTTP_STATE_READ_CHUNK_DELIMITER;
 				} else if (nr > 0) {
 					this.requestBodyRead((int) nr, false);
+					this.ridx+=nr;
 					chunkSize -= nr;
 					if (chunkSize == 0) {
 						this.currentState = HTTP_STATE_READ_CHUNK_DELIMITER;
 					}
-					this.compactReadBuffer();
+					this.clearReadBuffer(); 
+					assert LOG.debug(this.channelId+" will return false");
 					return false;
 				} else {
-					this.compactReadBuffer();
+					this.clearReadBuffer();
+					assert LOG.debug(this.channelId+" will return false");
 					return false;
 				}
 			}
@@ -621,6 +661,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				}
 				if (currentState == HTTP_STATE_READ_CHUNK_DELIMITER) {
 					this.clearReadBuffer();
+					assert LOG.debug(this.channelId+" will return false");
 					return false;
 				}
 			}
@@ -631,7 +672,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	}
 
 	@Override
-	protected void handleRead(int len) {
+	public void handleRead(int len) {
 		this.removeKeepAliveCheck();
 
 		for (;;) {
@@ -676,8 +717,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 					return;
 				}
 			}
-			if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT
-					|| currentState == HTTP_STATE_READ_CHUNK_DELIMITER
+			if (currentState == HTTP_STATE_READ_CHUNK_SIZE || currentState == HTTP_STATE_READ_CHUNKED_CONTENT || currentState == HTTP_STATE_READ_CHUNK_DELIMITER
 					|| currentState == HTTP_STATE_READ_CHUNK_FOOTER) {
 				if (!this.readInChunked()) {
 					if (request.supended) {
@@ -981,8 +1021,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			writeData(HttpConsts.CRLF, 0, 2);
 			writeData(buffer, index, length);
 			writeData(HttpConsts.CRLF, 0, 2);
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
-					this.defaultFlushTask());
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.defaultFlushTask());
 		}
 
 		public void flush() {
@@ -999,8 +1038,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
-					this.defaultFlushTask());
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.defaultFlushTask());
 		}
 
 		@Override
@@ -1030,8 +1068,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 			writeData(HttpConsts.CRLF, 0, 2);
 			writeData(buffer, index, length);
 			writeData(HttpConsts.CRLF, 0, 2);
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
-					this.wrap(task));
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.wrap(task));
 
 		}
 
@@ -1051,8 +1088,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 				throw new IllegalStateException();
 			}
 			state = STATE_SENDED;
-			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length,
-					this.wrap(task));
+			flushData(HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER, 0, HttpConsts.CHUNKED_ZERO_AND_CHUNKED_FOOTER.length, this.wrap(task));
 		}
 
 		@Override
@@ -1164,6 +1200,7 @@ public class HttpChannel<T extends HttpAsyncExecutor> extends AbstractNioAsyncCh
 	}
 
 	public void keepAliveTimeout() {
+		assert LOG.debug(this.channelId+ "invoke KeepAliveTimeout()");
 		this.close();
 	}
 

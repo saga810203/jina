@@ -7,6 +7,7 @@ import java.util.Map;
 
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.TaskCompletionHandler;
+import org.jfw.jina.http.HttpConsts;
 import org.jfw.jina.http.HttpHeaders;
 import org.jfw.jina.http2.FrameWriter;
 import org.jfw.jina.http2.Http2AsyncExecutor;
@@ -17,128 +18,98 @@ import org.jfw.jina.http2.headers.HpackDynamicTable;
 import org.jfw.jina.http2.headers.HpackHeaderField;
 import org.jfw.jina.http2.headers.HpackStaticTable;
 import org.jfw.jina.http2.headers.HpackUtil.IndexType;
+import org.jfw.jina.log.LogFactory;
+import org.jfw.jina.log.Logger;
 
 public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Http2FrameReader<T> implements FrameWriter {
-
+	private static final Logger LOG = LogFactory.getLog(Http2FrameWriter.class);
 	// remote Setting;
 	protected boolean remoteEnablePush = false;
 	protected long remoteMaxConcurrentStreams = Long.MAX_VALUE;
 	protected int remoteInitialWindowSize = 65535;
 	protected int remoteMaxFrameSize = 16777215;
-
 	// local Setting
 	protected long localHeaderTableSize = 4096;
-
 	protected long sendWindowSize = 65535;
-
-	// private OutputBuf outputCache;
-	// private int cacheCapacity;
-	// private int cacheIndex;
 
 	protected Frame firstFrame;
 	protected Frame lastFrame;
 
 	protected Frame dataFirst;
 	protected Frame dataLast;
-
-
 	protected HpackDynamicTable localDynaTable = new HpackDynamicTable(4096);
-
 	protected HpackEncoder hpackEncoder;
 
 	protected Http2FrameWriter(T executor, SocketChannel javaChannel) {
 		super(executor, javaChannel);
-		// newCache();
 		this.hpackEncoder = new HpackEncoder();
-
 	}
-
-	// private void newCache() {
-	// this.outputCache = executor.allocBuffer();
-	// this.cacheCapacity = this.outputCache.writableBytes();
-	// this.cacheIndex = 0;
-	// }
 
 	protected void writeFrame(Frame frame) {
-		ByteBuffer buffer = frame.buffer;
-		TaskCompletionHandler task = frame.listenner;
-		if (this.writeException == null) {
-			if (this.firstFrame == null) {
-				if (buffer.hasRemaining()) {
-					try {
-						javaChannel.write(buffer);
-					} catch (Throwable e) {
-						this.writeException = e;
-						executor.safeInvokeFailed(task, e);
-						this.close();
-						return;
-					}
-					if(buffer.hasRemaining()){
-						firstFrame =lastFrame = frame;
-						this.setOpWrite();
-						return;
-					}
-				}
-				executor.safeInvokeCompleted(task);
-			}else{
-				this.lastFrame.next= frame;
-				this.lastFrame = frame;
-			}
+		assert LOG.debug(this.channelId + " " + frameHeaderInfo("writeFrame", frame.buffer));
+		if (lastFrame == null) {
+			firstFrame = lastFrame = frame;
+			this.setOpWrite();
 		} else {
-			if (task != null) {
-				executor.safeInvokeFailed(task, this.writeException);
-			}
+			lastFrame.next = frame;
+			lastFrame = frame;
 		}
 	}
 
-	public boolean writeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
-		Frame frame = this.hpackEncoder.encodeHeaders(streamId, headers, endOfStream);
-		if (frame == null)
-			return false;
-		Frame tmp = null;
-		while (frame != null) {
-			tmp = frame.next;
-			frame.next = null;
-			this.writeFrame(frame);
-			frame = tmp;
+	protected void writeFrameList(Frame head, Frame tail) {
+		assert head != tail;
+		assert LOG.debug(this.channelId + " " + frameHeaderInfo("writeFrameList head==>", head.buffer));
+		assert LOG.debug(this.channelId + " " + frameHeaderInfo("writeFrameList tail==>", tail.buffer));
+		if (lastFrame == null) {
+			firstFrame = head;
+			lastFrame = tail;
+			this.setOpWrite();
+		} else {
+			lastFrame.next = head;
+			lastFrame = tail;
 		}
-		return true;
 	}
 
-	public boolean writeHeaders(int streamId, int responseStatus, HttpHeaders headers, boolean endOfStream) {
-		Frame frame = this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, endOfStream);
-		if (frame == null)
-			return false;
-		Frame tmp = null;
-		;
-		while (frame != null) {
-			tmp = frame.next;
-			frame.next = null;
-			this.writeFrame(frame);
-			frame = tmp;
+	public void writeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
+		assert LOG.debug(this.channelId + " writer headers:" + headers.toString());
+		this.hpackEncoder.encodeHeaders(streamId, headers, endOfStream);
+		Frame f = this.hpackEncoder.firstHeaderFrame;
+		Frame l = this.hpackEncoder.lastHeaderFrame;
+		if (f == l) {
+			writeFrame(f);
+		} else {
+			writeFrameList(f, l);
 		}
-		return true;
 	}
 
-	protected boolean writeHeaders(int streamId, int responseStatus, HttpHeaders headers, TaskCompletionHandler task) {
+	public void writeHeaders(int streamId, int responseStatus, HttpHeaders headers, boolean endOfStream) {
+		assert LOG.debug(this.channelId + " writer headers [response status = " + responseStatus + "] :  " + headers.toString());
+		this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, endOfStream);
+		Frame f = this.hpackEncoder.firstHeaderFrame;
+		Frame l = this.hpackEncoder.lastHeaderFrame;
+		if (f == l) {
+			writeFrame(f);
+		} else {
+			writeFrameList(f, l);
+		}
+	}
+
+	protected void writeHeaders(int streamId, int responseStatus, HttpHeaders headers, TaskCompletionHandler task) {
+		assert LOG.debug(this.channelId + " writer headers [response status = " + responseStatus + "] :  " + headers.toString());
 		assert task != null;
-		Frame frame = this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, true);
-		if (frame == null)
-			return false;
-		Frame tail = frame;
-		while (tail.next != null) {
-			frame = tail.next;
-			tail.next = null;
-			this.writeFrame(tail);
-			tail = frame;
+		this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, true);
+		Frame f = this.hpackEncoder.firstHeaderFrame;
+		Frame l = this.hpackEncoder.lastHeaderFrame;
+		if (f == l) {
+			f.listenner = task;
+			writeFrame(f);
+		} else {
+			l.listenner = task;
+			writeFrameList(f, l);
 		}
-		tail.listenner = task;
-		this.writeFrame(tail);
-		return true;
 	}
 
 	protected Frame emptyDataFrame(int streamId) {
-		// OutputBuf buf = executor.allocBuffer();
 		ByteBuffer buf = ByteBuffer.allocate(9);
 		buf.order(ByteOrder.BIG_ENDIAN);
 		buf.put((byte) 0);
@@ -291,7 +262,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		assert index >= 0;
 		assert index <= buffer.length;
 		assert length >= 0;
-		assert index + length >= buffer.length;
+		assert index + length <= buffer.length;
 		int lec = (int) errorCode;
 		int len = 4 + 4 + length;
 		int flen = len + 9;
@@ -337,10 +308,6 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	@Override
-	public void recvSettingAck() {
-	}
-
-	@Override
 	public void recvPingAck(byte[] buffer) {
 	}
 
@@ -371,18 +338,13 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		if (dataLast != null) {
 			dataLast.next = frame;
 			dataLast = frame;
-			return;
-		}
-		int dlen = frame.length;
-		if (sendWindowSize >= dlen) {
-			sendWindowSize -= dlen;
-			writeFrame(frame);
 		} else {
-			if (dataFirst == null) {
-				dataFirst = dataLast = frame;
+			int dlen = frame.length;
+			if (sendWindowSize >= dlen) {
+				sendWindowSize -= dlen;
+				writeFrame(frame);
 			} else {
-				dataLast.next = frame;
-				dataLast = frame;
+				dataFirst = dataLast = frame;
 			}
 		}
 	}
@@ -391,15 +353,6 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		dataLast = null;
 		lastFrame = null;
 		Frame frame;
-		while (dataFirst != null) {
-			TaskCompletionHandler listenner = dataFirst.listenner;
-			frame = dataFirst;
-			dataFirst = frame.next;
-			freeFrame(frame);
-			if (listenner != null) {
-				executor.safeInvokeFailed(listenner, this.writeException);
-			}
-		}
 		while (firstFrame != null) {
 			TaskCompletionHandler listenner = firstFrame.listenner;
 			frame = firstFrame;
@@ -409,8 +362,16 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 				executor.safeInvokeFailed(listenner, this.writeException);
 			}
 		}
+		while (dataFirst != null) {
+			TaskCompletionHandler listenner = dataFirst.listenner;
+			frame = dataFirst;
+			dataFirst = frame.next;
+			freeFrame(frame);
+			if (listenner != null) {
+				executor.safeInvokeFailed(listenner, this.writeException);
+			}
+		}
 	}
-
 	@Override
 	public void write() {
 		Frame frame;
@@ -484,6 +445,8 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			buf.putInt(5, streamId);
 			curr.type = FRAME_TYPE_DATA;
 			curr.length = payloadLength;
+			buf.flip();
+			curr.buffer = buf;
 			if (ok) {
 				return ret;
 			} else {
@@ -497,8 +460,8 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	public static class Frame {
-		byte type;
-		ByteBuffer buffer;
+		public byte type;
+		public ByteBuffer buffer;
 		public TaskCompletionHandler listenner;
 		public Frame next;
 		public int length;
@@ -514,9 +477,10 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		private int streamId = 0;
 		private long headTotalSize = 0;
 		private long currHeadSize = 0;
+		private Frame lastHeaderFrame = null;
 
 		private void reset() {
-			this.firstHeaderFrame = new Frame();
+			this.lastHeaderFrame = this.firstHeaderFrame = new Frame();
 			this.currHeaderFrame = this.firstHeaderFrame;
 			this.currHeaderFrame.next = null;
 			this.currentBuf = ByteBuffer.allocate(8192);
@@ -552,13 +516,12 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			Frame frame = new Frame();
 			frame.next = null;
 			this.currHeaderFrame.next = frame;
-			this.currHeaderFrame = frame;
+			this.lastHeaderFrame = this.currHeaderFrame = frame;
 			this.currentBuf = ByteBuffer.allocate(8192);
 			this.currentBuf.order(ByteOrder.BIG_ENDIAN);
 			this.currentBuf.put(frameReadBuffer, 0, 9);
 			this.encoderHeadLength = 0;
 			this.currentBufLength = Integer.min(8192 - 9, remoteMaxFrameSize);
-
 		}
 
 		private void endFrame() {
@@ -574,22 +537,19 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			this.currHeaderFrame = null;
 		}
 
-		private void freeFrame() {
-			Frame frame = this.firstHeaderFrame;
-			while (frame != this.currHeaderFrame) {
-				frame.buffer = null;
-				frame = frame.next;
-			}
-			this.currHeaderFrame = null;
-			this.currentBuf = null;
-		}
-
-		public Frame encodeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
+		public void encodeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
 			this.streamId = streamId;
 			this.endOfStream = endOfStream;
 			reset();
-			// To ensure we stay consistent with our peer check the size is
-			// valid before we potentially modify HPACK state.
+			long sizeOfHeaders = 0;
+			for (Map.Entry<String, String> header : headers) {
+				String name = header.getKey();
+				String value = header.getValue();
+				sizeOfHeaders += (name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD);
+				if (sizeOfHeaders > maxHeaderListSize) {
+					LOG.warn(Http2FrameWriter.this.channelId + " headers to large  than  HTTP2.SETTINGS.SETTINGS_MAX_HEADER_LIST_SIZE ");
+				}
+			}
 			for (Map.Entry<String, String> header : headers) {
 				String name = header.getKey();
 				String value = header.getValue();
@@ -598,53 +558,37 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 				// overflow.
 				currHeadSize = name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD;
 				headTotalSize += currHeadSize;
-				if (headTotalSize > maxHeaderListSize) {
-					this.freeFrame();
-					return null;
-				}
 				encodeHeader(name, value);
-
 			}
 			this.endFrame();
-			Frame ret = this.firstHeaderFrame;
-			this.firstHeaderFrame = null;
-			return ret;
 		}
 
-		public Frame encodeHeaders(int streamId, int status, HttpHeaders headers, boolean endOfStream) {
+		public void encodeHeaders(int streamId, int status, HttpHeaders headers, boolean endOfStream) {
 			this.streamId = streamId;
 			this.endOfStream = endOfStream;
 			reset();
-			// To ensure we stay consistent with our peer check the size is
-			// valid before we potentially modify HPACK state.
-			String name = ":status";
+			String name = HttpConsts.H2_STATUS;
 			String value = Integer.toString(status);
-			currHeadSize = name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD;
-			headTotalSize += currHeadSize;
-			if (headTotalSize > maxHeaderListSize) {
-				this.freeFrame();
-				return null;
+			long sizeOfHeaders = currHeadSize = name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD;
+			for (Map.Entry<String, String> header : headers) {
+				name = header.getKey();
+				value = header.getValue();
+				sizeOfHeaders += (name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD);
+				if (sizeOfHeaders > maxHeaderListSize) {
+					LOG.warn(Http2FrameWriter.this.channelId + " headers to large  than  HTTP2.SETTINGS.SETTINGS_MAX_HEADER_LIST_SIZE ");
+				}
 			}
+			headTotalSize += currHeadSize;
 			encodeHeader(name, value);
 
 			for (Map.Entry<String, String> header : headers) {
 				name = header.getKey();
 				value = header.getValue();
-				// OK to increment now and check for bounds after because this
-				// value is limited to unsigned int and will not
-				// overflow.
 				currHeadSize = name.length() + value.length() + HpackHeaderField.HEADER_ENTRY_OVERHEAD;
 				headTotalSize += currHeadSize;
-				if (headTotalSize > maxHeaderListSize) {
-					this.freeFrame();
-					return null;
-				}
 				encodeHeader(name, value);
 			}
 			this.endFrame();
-			Frame ret = this.firstHeaderFrame;
-			this.firstHeaderFrame = null;
-			return ret;
 		}
 
 		/**
@@ -785,5 +729,69 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 				}
 			}
 		}
+	}
+	
+/**
+FRAME_TYPE:4
+FRAME_FLAG:value = 0 ()
+FRAME_PAYLOAD_LENGTH:18
+FRAME_STREAM_ID:0
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+0x0,0x0,0x0,0x4,0x1,0x0,0x0,0x0,0x0,         :{type:FRAME_TYPE_SETTINGS,ack:true,payloadLength:0,streamId:0}
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+FRAME_TYPE:8
+FRAME_FLAG:value = 0 ()
+FRAME_PAYLOAD_LENGTH:4
+FRAME_STREAM_ID:0
+????????????????????????????
+FRAME_TYPE:1
+FRAME_FLAG:value = 37 (ACK,END_OF_HEADERS,END_OF_STREAM,PRIORITY_PRESENT,)
+FRAME_PAYLOAD_LENGTH:236
+FRAME_STREAM_ID:1
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+0x0,0x0,0xa,0x1,0x24,0x0,0x0,0x0,0x1, {type:FRAME_TYPE_HEADERS,endStream:false,padded:false,priority:true,endHeaders:true,payloadLength:10,streamId:1}
+0x0,0x0,0x0,0x0,0xf, 0x3f,0xe1,0xff,0x3,0x88,
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x1,     {type:FRAME_TYPE_DATA,endStream:true,padded:false,payloadLength:24,streamId:1}
+0x48,0x65,0x6c,0x6c,0x6f,0x20,0x57,0x6f,0x72,0x6c,0x64,0x20,0x2d,0x20,0x76,0x69,
+0x61,0x20,0x48,0x54,0x54,0x50,0x2f,0x32,
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+????????????????????????????
+0x0,0x0,0x0,0x4,0x1,0x0,0x0,0x0,0x0, FRAME_TYPE:4FRAME_FLAG:value = 1 (ACK,END_OF_STREAM,) FRAME_PAYLOAD_LENGTH:0FRAME_STREAM_ID:0
+????????????????????????????
+
+0x0,0x0,0x4d,0x1,0x25,0x0,0x0,0x0,0x3,0x80,0x0,0x0,0x0,0xdb,0x82,0xc4,
+0x87,0x0,0x84,0xb9,0x58,0xd3,0x3f,0x89,0x62,0x51,0xf7,0x31,0xf,0x52,0xe6,0x21,
+0xff,0xc1,0x53,0x9e,0x35,0x23,0x98,0xac,0x78,0x2c,0x75,0xfd,0x1a,0x91,0xcc,0x56,
+0x7,0x5d,0x53,0x7d,0x1a,0x91,0xcc,0x56,0x3e,0x7e,0xbe,0x58,0xf9,0xfb,0xed,0x0,
+0x17,0x7b,0x73,0x90,0x9d,0x29,0xad,0x17,0x18,0x60,0x2f,0x89,0x70,0xb8,0xf2,0xec,
+0xae,0x17,0x1c,0x63,0xc1,0xc0,????????????????????????????
+FRAME_TYPE:1
+FRAME_FLAG:value = 37 (ACK,END_OF_HEADERS,END_OF_STREAM,PRIORITY_PRESENT,)
+FRAME_PAYLOAD_LENGTH:77
+FRAME_STREAM_ID:3
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+0x0,0x0,0x6,0x1,0x24,0x0,0x0,0x0,0x3,0x0,0x0,0x0,0x0,0xf,
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+0x88,
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x3,
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+0x48,0x65,0x6c,0x6c,0x6f,0x20,0x57,0x6f,0x72,0x6c,0x64,0x20,0x2d,0x20,0x76,0x69,
+0x61,0x20,0x48,0x54,0x54,0x50,0x2f,0x32,
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+	 */
+	
+	public static void main(String[] args){
+		byte[] buffer = new byte[]{0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x1,};
+	System.out.println(Http2FrameReader.frameHeaderInfo("", buffer, 0));
+		
+		
 	}
 }

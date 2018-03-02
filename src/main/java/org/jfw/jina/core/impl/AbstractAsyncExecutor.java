@@ -11,6 +11,8 @@ import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
 import org.jfw.jina.core.AsyncTaskAdapter;
+import org.jfw.jina.log.LogFactory;
+import org.jfw.jina.log.Logger;
 import org.jfw.jina.util.Handler;
 import org.jfw.jina.util.Matcher;
 import org.jfw.jina.util.Queue;
@@ -19,6 +21,8 @@ import org.jfw.jina.util.TagQueue;
 import org.jfw.jina.util.impl.QueueProviderImpl;
 
 public abstract class AbstractAsyncExecutor extends QueueProviderImpl implements AsyncExecutor, QueueProvider, Runnable {
+	private static final Logger LOG = LogFactory.getLog(AbstractAsyncExecutor.class);
+	
 	public static final long START_TIME = System.nanoTime();
 	public static final int ST_NOT_STARTED = 1;
 	public static final int ST_STARTED = 2;

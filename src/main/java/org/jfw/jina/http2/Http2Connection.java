@@ -11,4 +11,5 @@ public interface Http2Connection {
     void streamWindowUpdate(int size);
     void handleStreamData(int size,boolean endOfStream);
     void handlePriority(int streamDependency, short weight,boolean exclusive);
+	void recvSettingAck();
 }

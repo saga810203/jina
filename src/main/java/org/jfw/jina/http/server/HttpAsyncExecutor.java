@@ -11,17 +11,19 @@ import org.jfw.jina.core.AsyncTaskAdapter;
 import org.jfw.jina.core.impl.NioAsyncExecutor;
 import org.jfw.jina.http.KeepAliveCheck;
 import org.jfw.jina.http.util.DateFormatter;
+import org.jfw.jina.log.LogFactory;
+import org.jfw.jina.log.Logger;
 import org.jfw.jina.util.DQueue;
-import org.jfw.jina.util.Matcher;
 
 public class HttpAsyncExecutor extends NioAsyncExecutor {
-
+	private static final Logger LOG = LogFactory.getLog(HttpAsyncExecutor.class);
+	
 	public static final KeepAliveConfig KEEP_ALIVE_CONFIG;
 
 	static {
 		KEEP_ALIVE_CONFIG = new KeepAliveConfig();
 		KEEP_ALIVE_CONFIG.setKeepAliveCheckRate(1000);
-		KEEP_ALIVE_CONFIG.setKeepAliveTimeout(1000 * 20);
+		KEEP_ALIVE_CONFIG.setKeepAliveTimeout(1000 * 3);
 	}
 
 	private final DQueue<KeepAliveCheck> keepAliveQueue;
@@ -46,22 +48,19 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 	public DQueue<KeepAliveCheck> getKeepAliveQueue() {
 		return keepAliveQueue;
 	}
-
-	private final Matcher<KeepAliveCheck> keepAliveCheckHandler = new Matcher<KeepAliveCheck>() {
-		@Override
-		public boolean match(KeepAliveCheck item) {
-			if (System.currentTimeMillis() - item.getKeepAliveTime() > keepAliveTimeout) {
-				item.keepAliveTimeout();
-				return false;
-			}
-			return true;
-		}
-	};
-
 	private AsyncTask keepAliveCheckTask = new AsyncTaskAdapter() {
 		@Override
 		public void execute(AsyncExecutor executor) throws Throwable {
-			keepAliveQueue.find(keepAliveCheckHandler);
+			assert LOG.debug("invoke keepAliveCheckTask()");
+			long deadlineTime = System.currentTimeMillis() - keepAliveTimeout;
+			for(;;){
+				KeepAliveCheck kac = keepAliveQueue.peek();
+				if(kac==null || (kac.getKeepAliveTime()> deadlineTime)){
+					return;
+				}
+				keepAliveQueue.unsafeShift();
+				kac.keepAliveTimeout();
+			}
 		}
 
 		@Override

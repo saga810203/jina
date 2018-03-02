@@ -6,6 +6,7 @@ import org.jfw.jina.buffer.InputBuf;
 import org.jfw.jina.util.Handler;
 
 public interface NioAsyncChannel{
+	void setChannelId(String id);
 	void read();
 	void write();
 	void setSelectionKey(SelectionKey key);

@@ -35,6 +35,8 @@ public class QueueProviderImpl implements QueueProvider {
 		assert node instanceof LinkedNode;
 		if (numNode < MAX_NUM_POOLED_NODE) {
 			++numNode;
+			node.tag= null;
+			node.item = null;
 			node.next = headOfProvider.next;
 			headOfProvider.next = ((LinkedNode) node);
 		}
@@ -58,6 +60,7 @@ public class QueueProviderImpl implements QueueProvider {
 			--numNode;
 			headOfProvider.next = ret.next;
 			ret.next = null;
+			ret.tag = null;
 			ret.item = item;
 			return ret;
 		}
@@ -1171,10 +1174,14 @@ public class QueueProviderImpl implements QueueProvider {
 		}
 
 		@Override
-		public void dequeue() {
+		public void dequeue(DQueue dest) {
+			assert dest != null;
+			assert dest instanceof DeLinkedQueue;
 			((LinkedNode) tag).next = next;
 			if (next != null) {
 				next.tag = tag;
+			}else{
+				((DeLinkedQueue)dest).head.tag = this.tag;
 			}
 			this.tag = null;
 			this.next = null;

@@ -1,8 +1,12 @@
 package org.jfw.jina.http;
 
+import java.nio.charset.StandardCharsets;
+
 public final class HttpConsts {
 	private HttpConsts() {
 	}
+
+	public static final byte[] HTTP2_PREFACE = ("PRI * HTTP/2.0\r\n" + "\r\n" + "SM\r\n" + "\r\n").getBytes(StandardCharsets.US_ASCII);
 
 	public static final String ACCEPT = "accept";
 	/**
@@ -49,8 +53,8 @@ public final class HttpConsts {
 	 * {@code "Access-Control-Max-Age"}
 	 */
 	public static final String ACCESS_CONTROL_MAX_AGE = "access-control-max-age";
-	public static final String CONTENT_DISPOSITION="content-disposition";
-	public static final String LINK="link";
+	public static final String CONTENT_DISPOSITION = "content-disposition";
+	public static final String LINK = "link";
 	/**
 	 * {@code "Access-Control-request-Headers"}
 	 */
@@ -423,19 +427,18 @@ public final class HttpConsts {
 	 * {@code "trailers"}
 	 */
 	public static final String TRAILERS = "trailers";
-	
-	public static final String H2_METHOD=":method";
-	public static final String H2_AUTHORITY=":authority";
-	public static final String GET="GET";
-	public static final String POST="POST";
-	public static final String PUT="PUT";
-	public static final String DELETE="DELETE";
-	public static final String H2_PATH=":path";
-	public static final String H2_SCHEME=":scheme";
-	public static final String H2_HTTP ="http";
-	public static final String H2_HTTPS ="https";
-	public static final String H2_STATUS=":status";
-	
+
+	public static final String H2_METHOD = ":method";
+	public static final String H2_AUTHORITY = ":authority";
+	public static final String GET = "GET";
+	public static final String POST = "POST";
+	public static final String PUT = "PUT";
+	public static final String DELETE = "DELETE";
+	public static final String H2_PATH = ":path";
+	public static final String H2_SCHEME = ":scheme";
+	public static final String H2_HTTP = "http";
+	public static final String H2_HTTPS = "https";
+	public static final String H2_STATUS = ":status";
 
 	/**
 	 * {@code "WebSocket"}
@@ -457,6 +460,6 @@ public final class HttpConsts {
 	public static final byte[] PUT_BYTE_ARRAY = new byte[] { 'P', 'U', 'T' };
 	public static final byte[] DELETE_BYTE_ARRAY = new byte[] { 'D', 'E', 'L', 'E', 'T', 'E' };
 	public static final byte[] HTTP11_BYTE_ARRAY = new byte[] { 'H', 'T', 'T', 'P', '/', '1', '.', '1' };
-	
-	public static final byte[] COLON_ARRAY = new byte[]{(byte)':'};
+
+	public static final byte[] COLON_ARRAY = new byte[] { (byte) ':' };
 }

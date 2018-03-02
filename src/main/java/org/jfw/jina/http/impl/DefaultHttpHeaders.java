@@ -236,4 +236,19 @@ public class DefaultHttpHeaders implements WritableHttpHeaders {
 		}
 		return false;
 	}
+
+	@Override
+	public String toString() {
+		StringBuilder sb = new StringBuilder();
+		sb.append(this.getClass().getName()).append(":{\r\n");
+		Entry entry = this.head;
+		while (entry != null) {
+			sb.append(entry.getKey()).append(":").append(entry.getValue()).append("\r\n");
+			entry = entry.next;
+		}
+		sb.append("}");
+		return sb.toString();		
+	}
+	
+	
 }

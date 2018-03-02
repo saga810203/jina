@@ -19,6 +19,8 @@ import org.jfw.jina.buffer.BufAllocator;
 import org.jfw.jina.buffer.OutputBuf;
 import org.jfw.jina.core.NioAsyncChannel;
 import org.jfw.jina.core.TaskCompletionHandler;
+import org.jfw.jina.log.LogFactory;
+import org.jfw.jina.log.Logger;
 import org.jfw.jina.core.AsyncExecutor;
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.core.AsyncTask;
@@ -26,7 +28,7 @@ import org.jfw.jina.util.ReflectionUtil;
 import org.jfw.jina.util.concurrent.SystemPropertyUtil;
 
 public class NioAsyncExecutor extends AbstractAsyncExecutor{
-
+	private static final Logger LOG = LogFactory.getLog(NioAsyncExecutor.class);
 	private static final boolean DISABLE_KEYSET_OPTIMIZATION = SystemPropertyUtil
 			.getBoolean("org.jfw.jina.util.concurrent.spi.NioAsyncExecutor", false);
 	private static final long SCHEDULE_PURGE_INTERVAL = SystemPropertyUtil
@@ -214,6 +216,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 					break;
 				}
 
+				assert LOG.debug("invoke select("+timeoutMillis+")");
 				int selectedKeys = selector.select(timeoutMillis);
 				selectCnt++;
 
@@ -290,11 +293,13 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 	public void handleRunningTask() {
 		try {
 			if (runningTasks.isEmpty()) {
+				assert LOG.debug("invoke select(wakenUp.getAndSet(false));");
 				select(wakenUp.getAndSet(false));
 				if (wakenUp.get()) {
 					selector.wakeup();
 				}
 			} else {
+				assert LOG.debug("invoke selectNow()");
 				selectNow();
 			}
 			needsToSelectAgain = false;

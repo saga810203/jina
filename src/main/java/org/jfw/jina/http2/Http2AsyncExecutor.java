@@ -9,8 +9,13 @@ import javax.net.ssl.SSLException;
 
 import org.jfw.jina.core.AsyncExecutorGroup;
 import org.jfw.jina.http.server.HttpAsyncExecutor;
+import org.jfw.jina.log.LogFactory;
+import org.jfw.jina.log.Logger;
 
 public class Http2AsyncExecutor extends HttpAsyncExecutor {
+	@SuppressWarnings("unused")
+	private static final Logger LOG = LogFactory.getLog(Http2AsyncExecutor.class);
+	
 	public static final int DEFAULT_SSL_BUFFER_SIZE = 1024 * 128;
 
 	public Http2AsyncExecutor(AsyncExecutorGroup group, Runnable closeTask, SelectorProvider selectorProvider) {
@@ -52,6 +57,19 @@ public class Http2AsyncExecutor extends HttpAsyncExecutor {
 			throw new IllegalStateException("sslEngine is closed");
 		}
 	}
+	public void wrap(SSLEngine engine, ByteBuffer buffer) throws SSLException {
+		sslBuffer.clear();
+		SSLEngineResult result = engine.wrap(buffer, sslBuffer);
+		bytesProduced = result.bytesProduced();
+		bytesConsumed = result.bytesConsumed();
+		SSLEngineResult.Status state = result.getStatus();
+		if (state == SSLEngineResult.Status.BUFFER_OVERFLOW) {
+			throw new IllegalArgumentException("to large encrypt data nosupported");
+		} else if (state == SSLEngineResult.Status.CLOSED) {
+			throw new IllegalStateException("sslEngine is closed");
+		}
+	}
+	
 	public static ByteBuffer SSL_EMTPY_BUFFER = ByteBuffer.allocate(0);
 	public void wrapHandData(SSLEngine engine)throws SSLException{
 		sslBuffer.clear();
@@ -75,7 +93,7 @@ public class Http2AsyncExecutor extends HttpAsyncExecutor {
 		bytesConsumed = result.bytesConsumed();
 		SSLEngineResult.Status state = result.getStatus();
 		if (state == SSLEngineResult.Status.BUFFER_OVERFLOW) {
-			throw new IllegalArgumentException("to large encrypt data nosupported");
+			throw new IllegalArgumentException("too large encrypt data nosupported");
 		} else if (state == SSLEngineResult.Status.CLOSED) {
 			throw new IllegalStateException("sslEngine is closed");
 		}else if(state != SSLEngineResult.Status.OK){
