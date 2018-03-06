@@ -287,4 +287,17 @@ public final class StringUtil {
 		}
 		return new String(chars, 0, len, StringUtil.US_ASCII);
 	}
+
+	public static String hexString(byte[] buffer,int begin,int end){
+		StringBuilder sb = new StringBuilder();
+		int col = 0;
+		for(int i =0; i < end;++i){
+			sb.append("0x").append(Integer.toHexString(buffer[i]&0xFF)).append(",");
+			++col;
+			if(col ==16){
+				sb.append("\r\n");
+			}
+		}
+		return sb.toString();
+	}
 }

@@ -46,7 +46,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	protected void writeFrame(Frame frame) {
-		assert LOG.debug(this.channelId + " " + frameHeaderInfo("writeFrame", frame.buffer));
+		assert LOG.assertDebug(this.channelId ," ", frameHeaderInfo("writeFrame", frame.buffer));
 		if (lastFrame == null) {
 			firstFrame = lastFrame = frame;
 			this.setOpWrite();
@@ -58,8 +58,8 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 
 	protected void writeFrameList(Frame head, Frame tail) {
 		assert head != tail;
-		assert LOG.debug(this.channelId + " " + frameHeaderInfo("writeFrameList head==>", head.buffer));
-		assert LOG.debug(this.channelId + " " + frameHeaderInfo("writeFrameList tail==>", tail.buffer));
+		assert LOG.assertDebug(this.channelId , " " , frameHeaderInfo("writeFrameList head==>", head.buffer));
+		assert LOG.assertDebug(this.channelId , " " , frameHeaderInfo("writeFrameList tail==>", tail.buffer));
 		if (lastFrame == null) {
 			firstFrame = head;
 			lastFrame = tail;
@@ -71,7 +71,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	public void writeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
-		assert LOG.debug(this.channelId + " writer headers:" + headers.toString());
+		assert LOG.assertDebug(this.channelId , " writer headers:" , headers.toString());
 		this.hpackEncoder.encodeHeaders(streamId, headers, endOfStream);
 		Frame f = this.hpackEncoder.firstHeaderFrame;
 		Frame l = this.hpackEncoder.lastHeaderFrame;
@@ -83,7 +83,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	public void writeHeaders(int streamId, int responseStatus, HttpHeaders headers, boolean endOfStream) {
-		assert LOG.debug(this.channelId + " writer headers [response status = " + responseStatus + "] :  " + headers.toString());
+		assert LOG.assertDebug(this.channelId , " writer headers [response status = " , responseStatus , "] :  " , headers.toString());
 		this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, endOfStream);
 		Frame f = this.hpackEncoder.firstHeaderFrame;
 		Frame l = this.hpackEncoder.lastHeaderFrame;
@@ -95,7 +95,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	protected void writeHeaders(int streamId, int responseStatus, HttpHeaders headers, TaskCompletionHandler task) {
-		assert LOG.debug(this.channelId + " writer headers [response status = " + responseStatus + "] :  " + headers.toString());
+		assert LOG.assertDebug(this.channelId , " writer headers [response status = " , responseStatus + "] :  " , headers.toString());
 		assert task != null;
 		this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, true);
 		Frame f = this.hpackEncoder.firstHeaderFrame;

@@ -9,75 +9,73 @@ public final class NoLogger implements Logger
 	private NoLogger() {
 	}
 	@Override
-    public boolean trace(String message)
+    public void trace(String message)
     {
-	 return true;  	    
     }
 
 	@Override
-    public boolean trace(String message, Throwable t)
+    public void trace(String message, Throwable t)
     {
-		return true;
     }
 
 	@Override
-    public boolean debug(String message)
+    public void debug(String message)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean debug(String message, Throwable t)
+    public void debug(String message, Throwable t)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean info(String message)
+    public void info(String message)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean info(String message, Throwable t)
+    public void info(String message, Throwable t)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean warn(String message)
+    public void warn(String message)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean warn(String message, Throwable t)
+    public void warn(String message, Throwable t)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean error(String message)
+    public void error(String message)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean error(String message, Throwable t)
+    public void error(String message, Throwable t)
     {
-		return true;
+		
     }
 
 	@Override
-    public boolean fatal(String message)
+    public void fatal(String message)
     {
-		return true; 
+		 
     }
 
 	@Override
-    public boolean fatal(String message, Throwable t)
+    public void fatal(String message, Throwable t)
     {
-	    return true;
+	    
     }
 
     public boolean enableTrace() {
@@ -96,11 +94,35 @@ public final class NoLogger implements Logger
         return false;
     }
 	@Override
-	public boolean debug(ByteBuffer buffer, int begin, int end) {
+	public boolean assertTrace(Object... msg) {
 		return true;
 	}
 	@Override
-	public boolean debug(byte[] buffer, int begin, int end) {
+	public boolean assertTrace(Throwable t, Object... msg) {
+		return true;
+	}
+	@Override
+	public boolean assertDebug(Object... msg) {
+		return true;
+	}
+	@Override
+	public boolean assertDebug(Throwable t, Object... msg) {
+		return true;
+	}
+	@Override
+	public boolean assertInfo(Object... msg) {
+		return true;
+	}
+	@Override
+	public boolean assertInfo(Throwable t, Object... msg) {
+		return true;
+	}
+	@Override
+	public boolean assertTrace(ByteBuffer buffer, int begin, int end) {
+		return true;
+	}
+	@Override
+	public boolean assertTrace(byte[] buffer, int begin, int end) {
 		return true;
 	}
 

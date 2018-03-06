@@ -37,7 +37,7 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 	protected SocketChannel javaChannel;
 	protected SelectionKey key;
 	protected TagQueue<ByteBuffer, TaskCompletionHandler> outputCache;
-	protected Throwable writeException;
+	protected Throwable transferException;
 	int ridx;
 	int widx;
 	ByteBuffer rbuffer;
@@ -50,13 +50,10 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 	private Http2Settings setting;
 	protected ByteBuffer sslReadBuffer;
 	protected int sslCapacity;
-	protected int sslRidx;
-	protected int sslWidx;
 	private JdkSslEngine wrapEngine;
 	private SSLEngine engine;
-
+	private boolean readSslHeader = true;
 	private Http2Settings remoteConfig;
-	private int packetLen = 0;
 	private HttpService service;
 
 	private NioAsyncChannel delegatedChannel = null;
@@ -71,14 +68,12 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		this.ridx = this.widx = 0;
 		this.key = sslChannel.getSelectionKey();
 		this.sslReadBuffer = sslChannel.getSslReadBuffer();
-		this.sslRidx = sslChannel.getSslRidx();
-		this.sslWidx = sslChannel.getSslWidx();
 		this.sslCapacity = this.sslReadBuffer.capacity();
+		this.readSslHeader = true;
 		this.wrapEngine = sslChannel.getWrapSslEngine();
 		this.engine = this.wrapEngine.getWrappedEngine();
 		this.keepAliveNode = this.executor.newDNode(this);
 		this.outputCache = sslChannel.getOutCache();
-		assert LOG.debug(sslChannel.getChannelId() + " outputCache.isEmpty:" + outputCache.isEmpty() + ",sslRidx:" + sslRidx + ",sslWidx:" + this.sslWidx);
 	}
 
 	public HttpService getService() {
@@ -94,121 +89,90 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		this.channelId = id;
 	}
 
-	private void unwrap() {
-		for (;;) {
-			int dl = this.sslWidx - this.sslRidx;
-			assert LOG.debug(this.channelId + " packetLen == " + this.packetLen + " dl == " + dl);
-			if (this.packetLen > 0) {
-				if (dl < this.packetLen) {
-					break;
-				}
-			} else {
-				if (dl < SslUtil.SSL_RECORD_HEADER_LENGTH) {
-					break;
-				}
-				int pl = SslUtil.getEncryptedPacketLength(this.sslReadBuffer, this.sslRidx);
-				if (pl == SslUtil.NOT_ENCRYPTED) {
-					if (LOG.enableWarn()) {
-						LOG.warn(this.channelId + " invalid ssl record length:" + pl);
-					}
-					this.writeException = new RuntimeException("invalid ssl record length");
-					this.close();
-					return;
-				} else {
-					this.packetLen = pl;
-					if (dl < pl) {
-						break;
-					}
-				}
-			}
-			try {
-				this.executor.unwrap(this.engine, this.sslReadBuffer, this.sslRidx, packetLen);
-			} catch (Exception e) {
-				if (LOG.enableWarn()) {
-					LOG.warn(this.channelId + " unwrap error", e);
-				}
-				this.writeException = e;
-				this.close();
-				return;
-			}
-			this.packetLen = 0;
-			this.sslRidx += executor.bytesConsumed;
-			int produced = executor.bytesProduced;
-			if (produced > 0) {
-				this.ensureCapacity4ReadBuffer(produced);
-				this.rbuffer.put(executor.sslByteArray, 0, produced);
-				this.widx += produced;
-			}
-			assert LOG.debug(this.rbuffer, this.ridx, this.widx);
+	private void setTransferException(Throwable e, boolean read, boolean ssl) {
+		if (LOG.enableWarn()) {
+			LOG.warn(this.channelId + " network or ssl error{read:" + read + ",ssl:" + ssl + "}:", e);
 		}
-		int len = this.widx - this.ridx;
-		if (len > 0) {
-			this.handleRead(len);
-		} else {
-			this.addKeepAliveCheck();
-		}
+		this.transferException = e;
+		this.close();
 	}
 
-	private void handleRead(int len) {
-		assert LOG.debug(this.rbuffer, this.ridx, this.widx);
+	private boolean unwrap() {
+		assert LOG.assertDebug(this.channelId, " invoke unwrap()");
+		try {
+			this.executor.unwrap(this.engine, this.sslReadBuffer);
+		} catch (Exception e) {
+			setTransferException(new RuntimeException("unwrap error"), false, true);
+			return false;
+		}
+		int produced = executor.bytesProduced;
+		if (produced > 0) {
+			this.ensureCapacity4ReadBuffer(produced);
+			this.rbuffer.put(executor.sslByteArray, 0, produced);
+			this.widx += produced;
+		}
+		return true;
+	}
+
+	private boolean handleRead() {
+		assert LOG.assertDebug(this.channelId + " invoke handleRead()");
+		this.removeKeepAliveCheck();
+		int len = this.widx - this.ridx;
 		if (this.prefaced) {
 			if (len >= HttpConsts.HTTP2_PREFACE.length) {
-				assert LOG.debug(this.channelId + " read prefaced");
+				assert LOG.assertTrace("read prefaced");
 				int pidx = this.ridx;
 				for (int i = 0; i < HttpConsts.HTTP2_PREFACE.length; ++i) {
 					if (HttpConsts.HTTP2_PREFACE[i] != this.rBytes[pidx++]) {
-						if (LOG.enableWarn()) {
-							LOG.warn(this.channelId + " http2 prefaced error");
-						}
-						this.close();
-						return;
+						this.setTransferException(new IllegalStateException("invalid http prefaced"), true, false);
+						return true;
 					}
 				}
 				this.ridx += HttpConsts.HTTP2_PREFACE.length;
 				len -= HttpConsts.HTTP2_PREFACE.length;
-				assert LOG.debug(this.channelId + " read prefaced success");
+				assert LOG.assertTrace("read prefaced success");
 				this.prefaced = false;
 			} else {
 				this.addKeepAliveCheck();
-				assert LOG.debug(this.channelId + " read prefaced fail:prefaced  to small");
-				return;
+				assert LOG.assertTrace("read prefaced fail:prefaced  to small");
+				return false;
 			}
 		}
 		if (len >= 9) {
 			int pos = this.ridx;
 			int pl = (this.rBytes[pos++] & 0xff) << 16 | ((this.rBytes[pos++] & 0xff) << 8) | (this.rBytes[pos++] & 0xff);
-			assert LOG.debug(this.channelId + " read setting frame payload length:" + pl);
-			if (this.rBytes[pos++] != Http2FrameReader.FRAME_TYPE_SETTINGS) {
-				if (LOG.enableWarn()) {
-					LOG.warn(this.channelId + " fist frame type is not a SETTING");
-				}
-				this.close();
-				return;
+			assert LOG.assertTrace("read setting frame payload length:" + pl);
+			byte frameType = this.rBytes[pos++];
+			if (frameType != Http2FrameReader.FRAME_TYPE_SETTINGS) {
+				this.setTransferException(new IllegalStateException("invalid http2 frame type:" + frameType), true, false);
+				return true;
 			}
 			len -= 9;
 			if (len >= pl) {
 				this.ridx += 9;
 				Http2Settings remoteSettings = this.parseSetting(pl);
 				if (remoteSettings == null) {
-					this.close();
-					return;
+					this.setTransferException(new IllegalStateException("invalid http2 frame(SETTING)"), true, false);
+					return true;
 				}
 				this.ridx += pl;
 				ByteBuffer sendB = this.buildInitSend();
 				if (sendB == null) {
-					this.close();
-					return;
+					return true;
 				}
 				this.remoteConfig = remoteSettings;
-				this.write(sendB);
+				this.outputCache.offer(sendB, this);
+				this.setOpWrite();
+				return true;
 			} else {
 				this.addKeepAliveCheck();
 			}
 		}
+		return false;
 	}
 
 	private void switchHandler() {
-		assert LOG.debug(this.channelId + " invoke swichHandler");
+		assert LOG.assertDebug(this.channelId + " invoke swichHandler");
 		SslHttp2ServerConnection sslChannel = new SslHttp2ServerConnection(this.executor, javaChannel, this.setting, this);
 		sslChannel.setService(service);
 		this.delegatedChannel = sslChannel;
@@ -216,10 +180,8 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		sslChannel.setChannelId(this.channelId);
 		sslChannel.addKeepAliveCheck();
 		sslChannel.applySetting(this.remoteConfig);
-		if (this.sslWidx > this.sslRidx) {
-			sslChannel.read();
-		} else if (this.widx > this.ridx) {
-			assert LOG.debug(this.rbuffer, this.ridx, this.widx);
+		if (this.widx > this.ridx) {
+			assert LOG.assertTrace(this.rbuffer, this.ridx, this.widx);
 			sslChannel.handleRead(this.widx - this.ridx);
 		}
 	}
@@ -249,19 +211,20 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 					settings.maxHeaderListSize(value);
 				}
 			} catch (IllegalArgumentException e) {
-				LOG.error(this.channelId + " parse http2 SETTING error", e);
+				if (LOG.enableWarn()) {
+					LOG.warn(this.channelId + " parse http2 SETTING frame error", e);
+				}
 				return null;
 			}
 		}
-		assert LOG.debug(this.channelId + "parse http2 SEETING:" + settings);
 		return settings;
 	}
 
 	private ByteBuffer buildInitSend() {
-		assert LOG.debug(this.channelId + "local http2 SETTING:" + setting.toString());
+		assert LOG.assertDebug(this.channelId + "local http2 SETTING:" + setting.toString());
 		ByteBuffer buffer = ByteBuffer.allocate(8192);
 		buffer.order(ByteOrder.BIG_ENDIAN);
-//		buffer.put(HttpConsts.HTTP2_PREFACE);
+		// buffer.put(HttpConsts.HTTP2_PREFACE);
 		int len = setting.writeToFrameBuffer(executor.ouputCalcBuffer, 0);
 		buffer.put(executor.ouputCalcBuffer, 0, len);
 		buffer.put((byte) 0);
@@ -274,7 +237,7 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		try {
 			executor.wrap(engine, buffer);
 		} catch (Throwable e) {
-			this.writeException = e;
+			this.setTransferException(new IllegalStateException("wrap data error"), false, false);
 			return null;
 		}
 		buffer.clear();
@@ -283,77 +246,111 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		return buffer;
 	}
 
-	@Override
-	public void read() {
-		if (this.delegatedChannel != null) {
-			this.delegatedChannel.read();
-			return;
-		}
-		this.removeKeepAliveCheck();
+	private static final int _ensureCapacity = ~(8192 - 1);
+
+	protected void ensureCapacity(int size) {
+		assert LOG.assertDebug(this.channelId, " invoke ensureCapacity(", size, ")");
+		// int nsize =((size + 8192 - 1) & (~(8192 - 1)));
+		int nsize = (size + 8191) & _ensureCapacity;
+		assert LOG.assertTrace("nsize=", nsize);
+		ByteBuffer bb = ByteBuffer.allocate(nsize);
+		bb.order(ByteOrder.BIG_ENDIAN);
+		bb.limit(size);
+		this.sslReadBuffer.flip();
+		bb.put(this.sslReadBuffer);
+		this.sslCapacity = nsize;
+		this.sslReadBuffer = bb;
+	}
+
+	private boolean readSslRecord() {
+		assert LOG.assertDebug(this.channelId, " invoke readSslRecord()");
 		int len = 0;
-		for (;;) {
-			try {
-				len = this.javaChannel.read(sslReadBuffer);
-			} catch (Throwable e) {
-				if (LOG.enableWarn()) {
-					LOG.warn(this.channelId + " read os buffer error", e);
-				}
-				this.close();
-				return;
-			}
-			if (len == 0) {
-				break;
-			} else if (len < 0) {
-				unwrap();
-				if (this.writeException == null) {
-					this.cleanOpRead();
-					this.handleInputClose();
-				}
-				return;
-			}
-			this.sslWidx += len;
-			if (this.sslWidx >= sslCapacity) {
-				if (this.sslRidx > 0) {
-					this.compactSslReadBuffer();
-				} else {
-					this.extendSslReadBuffer();
-				}
-			}
+		try {
+			len = this.javaChannel.read(sslReadBuffer);
+		} catch (Throwable e) {
+			this.setTransferException(e, true, false);
+			return false;
 		}
-		unwrap();
-	}
-
-	private void handleInputClose() {
-		if (this.delegatedChannel != null) {
-			this.delegatedChannel.read();
-			return;
-		}
-		this.close();
-	}
-
-	protected void write(ByteBuffer buffer) {
-		if (this.writeException == null) {
-			if (outputCache.isEmpty()) {
-				try {
-					this.javaChannel.write(buffer);
-				} catch (IOException e) {
-					if (LOG.enableWarn()) {
-						LOG.warn(this.channelId + " write data error", e);
+		if (sslReadBuffer.hasRemaining()) {
+			if (len < 0) {
+				this.setTransferException(new IllegalStateException("input close"), true, false);
+			}
+			// readSslHeader = true or false;
+			return false;
+		} else {
+			if (readSslHeader) {
+				len = SslUtil.getTlsPacketLength(sslReadBuffer);
+				if (len > 0) {
+					if (len > this.sslCapacity) {
+						this.ensureCapacity(len);
+					}else{
+						this.sslReadBuffer.limit(len);
 					}
-					this.writeException = e;
-					this.close();
-					return;
-				}
-				if (buffer.hasRemaining()) {
-					outputCache.offer(buffer, this);
-					this.setOpWrite();
+					try {
+						len = this.javaChannel.read(sslReadBuffer);
+					} catch (Throwable e) {
+						this.setTransferException(e, true, false);
+						return false;
+					}
+					if (sslReadBuffer.hasRemaining()) {
+						if (len < 0) {
+							this.setTransferException(new IllegalStateException("input closed with readSslRecord"), true, false);
+						}
+						readSslHeader = false;
+						// readSslHeader = false;
+						return false;
+					} else {
+						// readSslHeader = true;
+						return true;
+					}
 				} else {
-					this.completed(this.executor);
+					this.setTransferException(new IllegalAccessError("invalid TLS access"), true, false);
+					return false;
 				}
 			} else {
-				outputCache.offer(buffer, this);
+				// readSslHeader = false;
+				readSslHeader = true;
+				return true;
 			}
 		}
+	}
+
+	@Override
+	public void read() {
+		if (this.javaChannel != null) {
+			if (this.delegatedChannel != null) {
+				this.delegatedChannel.read();
+				return;
+			}
+			for (;;) {
+				if (this.readSslRecord()) {
+					this.sslReadBuffer.flip();
+				} else {
+					return;
+				}
+				if (unwrap()) {
+					this.sslReadBuffer.clear();
+					this.sslReadBuffer.limit(5);
+					if (this.handleRead()) {
+						return;
+					}
+				} else {
+					return;
+				}
+			}
+		}
+	}
+
+	private boolean checkInWrite() {
+		if (this.transferException != null) {
+			LOG.fatal(this.channelId + " transferException is not null", transferException);
+			return false;
+		}
+		if (null == this.javaChannel) {
+			LOG.fatal(this.channelId + " javaChannel is null");
+			return false;
+		}
+		return true;
 	}
 
 	@Override
@@ -362,6 +359,7 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 			this.delegatedChannel.write();
 			return;
 		}
+		assert checkInWrite();
 		for (;;) {
 			TagNode tagNode = outputCache.peekTagNode();
 			if (tagNode == null) {
@@ -376,11 +374,7 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 				try {
 					this.javaChannel.write(buf);
 				} catch (IOException e) {
-					if (LOG.enableWarn()) {
-						LOG.warn(this.channelId + " write data error", e);
-					}
-					this.writeException = e;
-					this.close();
+					setTransferException(e, false, false);
 					return;
 				}
 				if (buf.hasRemaining()) {
@@ -399,11 +393,24 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		this.key = key;
 	}
 
+	private boolean checkInClose() {
+		if (this.delegatedChannel != null) {
+			LOG.fatal(this.channelId + " delegatedChannel is not null");
+			return false;
+		}
+		if (this.javaChannel == null) {
+			LOG.fatal(this.channelId + " javaChannel is null");
+			return false;
+		}
+		return true;
+	}
+
 	@Override
 	public void close() {
 		if (this.delegatedChannel != null) {
 			this.delegatedChannel.close();
 		} else {
+			assert checkInClose();
 			this.removeKeepAliveCheck();
 			if (this.keepAliveNode != null) {
 				((LinkedNode) this.keepAliveNode).item = null;
@@ -448,7 +455,7 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 
 	@Override
 	public void keepAliveTimeout() {
-		assert LOG.debug(this.channelId + "invoke KeepAliveTimeout()");
+		assert LOG.assertDebug(this.channelId, "invoke KeepAliveTimeout()");
 		this.close();
 	}
 
@@ -456,10 +463,10 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		if (this.keepAliveTimeout != Long.MAX_VALUE) {
 			this.keepAliveTimeout = Long.MAX_VALUE;
 			this.keepAliveNode.dequeue(this.executor.getKeepAliveQueue());
-			assert LOG.debug(this.channelId + " invoke removeKeepAliveCheck() return true");
+			assert LOG.assertTrace(this.channelId, " invoke removeKeepAliveCheck() return true");
 			return true;
 		}
-		assert LOG.debug(this.channelId + " invoke removeKeepAliveCheck() return false");
+		assert LOG.assertTrace(this.channelId, " invoke removeKeepAliveCheck() return false");
 		return false;
 	}
 
@@ -467,11 +474,10 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		if (this.keepAliveTimeout == Long.MAX_VALUE) {
 			this.keepAliveTimeout = System.currentTimeMillis();
 			this.keepAliveNode.enqueue(this.executor.getKeepAliveQueue());
-			assert LOG.debug(this.channelId + " executor.getKeepAliveQueue().isEmpty():" + this.executor.getKeepAliveQueue().isEmpty());
-			assert LOG.debug(this.channelId + " invoke addKeepAliveCheck() return true");
+			assert LOG.assertTrace(this.channelId, " invoke addKeepAliveCheck() return true");
 			return true;
 		}
-		assert LOG.debug(this.channelId + " invoke addKeepAliveCheck() return false");
+		assert LOG.assertTrace(this.channelId, " invoke addKeepAliveCheck() return false");
 		return false;
 	}
 
@@ -528,28 +534,6 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 		}
 	}
 
-	private void compactSslReadBuffer() {
-		if (this.sslRidx == this.sslWidx) {
-			this.sslReadBuffer.clear();
-		} else if (this.sslRidx > 0) {
-			this.sslReadBuffer.flip();
-			this.sslReadBuffer.position(this.sslRidx);
-			this.sslReadBuffer.compact();
-			this.sslWidx = this.sslWidx - this.sslRidx;
-			this.sslRidx = 0;
-			this.sslReadBuffer.limit(this.sslCapacity).position(sslWidx);
-		}
-	}
-
-	private void extendSslReadBuffer() {
-		this.sslCapacity += 4096;
-		ByteBuffer buffer = ByteBuffer.allocate(sslCapacity);
-		buffer.put((ByteBuffer) sslReadBuffer.flip().position(this.sslRidx));
-		this.sslWidx = this.sslWidx - this.sslRidx;
-		this.sslRidx = 0;
-		this.sslReadBuffer = buffer;
-	}
-
 	protected void compactReadBuffer() {
 		if (this.ridx > 0) {
 			if (ridx == this.widx) {
@@ -585,14 +569,6 @@ public class SslHttp2CheckChannel implements NioAsyncChannel, KeepAliveCheck, Ta
 
 	public ByteBuffer getSslReadBuffer() {
 		return this.sslReadBuffer;
-	}
-
-	public int getSslRidx() {
-		return this.sslRidx;
-	}
-
-	public int getSslWidx() {
-		return this.sslWidx;
 	}
 
 	public JdkSslEngine getWrapSslEngine() {

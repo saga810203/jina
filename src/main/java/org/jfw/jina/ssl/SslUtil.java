@@ -4,7 +4,6 @@ import java.nio.ByteBuffer;
 
 import javax.net.ssl.SSLHandshakeException;
 
-
 public final class SslUtil {
 
 	// Protocols
@@ -66,7 +65,7 @@ public final class SslUtil {
 		return (SSLHandshakeException) new SSLHandshakeException(e.getMessage()).initCause(e);
 	}
 
-	public static int getEncryptedPacketLength(ByteBuffer buffer, int pos) {
+	public static int getEncryptedPacketLength(ByteBuffer buffer, final int pos) {
 		int packetLength = 0;
 		// SSLv3 or TLS - Check ContentType
 		boolean tls;
@@ -115,6 +114,77 @@ public final class SslUtil {
 			}
 		}
 		return packetLength;
+	}
+
+	public static int getEncryptedPacketLength(ByteBuffer buffer) {
+		int packetLength = 0;
+		// SSLv3 or TLS - Check ContentType
+		boolean tls;
+		switch (buffer.get(0)) {
+			case SSL_CONTENT_TYPE_CHANGE_CIPHER_SPEC:
+			case SSL_CONTENT_TYPE_ALERT:
+			case SSL_CONTENT_TYPE_HANDSHAKE:
+			case SSL_CONTENT_TYPE_APPLICATION_DATA:
+			case SSL_CONTENT_TYPE_EXTENSION_HEARTBEAT:
+				tls = true;
+				break;
+			default:
+				// SSLv2 or bad data
+				tls = false;
+		}
+
+		if (tls) {
+			// SSLv3 or TLS - Check ProtocolVersion
+			int majorVersion = buffer.get(1);
+			if (majorVersion == 3) {
+				// SSLv3 or TLS
+				packetLength = (buffer.getShort(3) & 0xFFFF) + SSL_RECORD_HEADER_LENGTH;
+				if (packetLength <= SSL_RECORD_HEADER_LENGTH) {
+					// Neither SSLv3 or TLSv1 (i.e. SSLv2 or bad data)
+					tls = false;
+				}
+			} else {
+				// Neither SSLv3 or TLSv1 (i.e. SSLv2 or bad data)
+				tls = false;
+			}
+		}
+
+		if (!tls) {
+			// SSLv2 or bad data - Check the version
+			int headerLength = ((buffer.get(0) & 0xFF) & 0x80) != 0 ? 2 : 3;
+			int majorVersion = buffer.get(headerLength + 1) & 0xFF;
+			if (majorVersion == 2 || majorVersion == 3) {
+				// SSLv2
+				short ts = buffer.getShort(0);
+				packetLength = headerLength == 2 ? (ts & 0x7FFF) + 2 : (ts & 0x3FFF) + 3;
+				if (packetLength <= headerLength) {
+					return NOT_ENOUGH_DATA;
+				}
+			} else {
+				return NOT_ENCRYPTED;
+			}
+		}
+		return packetLength;
+	}
+
+	public static int getTlsPacketLength(ByteBuffer buffer) {
+		int packetLength = 0;
+		// SSLv3 or TLS - Check ContentType
+		byte val = buffer.get(0);
+		if (val == SSL_CONTENT_TYPE_CHANGE_CIPHER_SPEC || val == SSL_CONTENT_TYPE_ALERT || val == SSL_CONTENT_TYPE_HANDSHAKE
+				|| val == SSL_CONTENT_TYPE_APPLICATION_DATA || val == SSL_CONTENT_TYPE_EXTENSION_HEARTBEAT) {
+			int majorVersion = buffer.get(1);
+			if (majorVersion == 3) {
+				// SSLv3 or TLS
+				packetLength = (buffer.getShort(3) & 0xFFFF) + SSL_RECORD_HEADER_LENGTH;
+				if (packetLength <= SSL_RECORD_HEADER_LENGTH) {
+					return 0;
+				}else{
+					return packetLength;
+				}
+			}
+		}
+		return 0;
 	}
 
 }

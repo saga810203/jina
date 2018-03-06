@@ -1,26 +1,35 @@
 package org.jfw.jina.log;
 
 import java.nio.ByteBuffer;
-
+/**
+ * 
+ * @author Saga
+ *  trace<<debug<<info<<warn<<error<<fatal
+ */
 public interface Logger
 {
     boolean enableTrace();
-	boolean trace(String message);
-	boolean trace(String message,Throwable t);
+	void trace(String message);
+	boolean assertTrace(Object... msg);
+	void trace(String message,Throwable t);
+	boolean assertTrace(Throwable t,Object... msg);
 	boolean enableDebug();
-	boolean debug(String message);
-	boolean debug(String message,Throwable t);
+	void debug(String message);
+	boolean assertDebug(Object... msg);
+	void debug(String message,Throwable t);
+	boolean assertDebug(Throwable t,Object... msg);
 	boolean enableInfo();
-	boolean info(String message);
-	boolean info(String message,Throwable t);
+	void info(String message);
+	boolean assertInfo(Object... msg);
+	void info(String message,Throwable t);
+	boolean assertInfo(Throwable t,Object... msg);
 	boolean enableWarn();
-	boolean warn(String message);
-	boolean warn(String message,Throwable t);
-	boolean error(String message);
-	boolean error(String message,Throwable t);
-	boolean fatal(String message);
-	boolean fatal(String message,Throwable t);
-	
-	boolean debug(ByteBuffer buffer,int begin,int end);
-	boolean debug(byte[] buffer,int begin,int end);
+	void warn(String message);
+	void warn(String message,Throwable t);
+	void error(String message);
+	void error(String message,Throwable t);
+	void fatal(String message);
+	void fatal(String message,Throwable t);	
+	boolean assertTrace(ByteBuffer buffer,int begin,int end);
+	boolean assertTrace(byte[] buffer,int begin,int end);
 }

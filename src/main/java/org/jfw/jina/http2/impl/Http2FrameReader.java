@@ -87,7 +87,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	// protected boolean headerProcessing = false;
 	long streamIdOfHeaders = INVALID_STREAM_ID;
 
-	byte currentState = FRAME_STATE_READ_HEADER;
+	protected byte currentState = FRAME_STATE_READ_HEADER;
 
 	boolean goAwayed = false;
 
@@ -102,31 +102,34 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	protected abstract void handleProtocolError();
 
-	public void handleRead(int len) {
+	public boolean handleRead(int len) {
 		this.removeKeepAliveCheck();
 		while (this.widx > this.ridx) {
 			if (this.currentState == FRAME_STATE_READ_HEADER) {
 				if (!doReadFrameHeader()) {
 					this.addKeepAliveCheck();
 					this.compactReadBuffer();
-					return;
+					return true;
 				}
 			}
 			if (this.currentState == FRAME_STATE_READ_DATA) {
 				if (!doReadFramePayLoad()) {
 					this.compactReadBuffer();
 					this.addKeepAliveCheck();
-					return;
+					return true;
 				}
 			}
 			if (this.currentState < 0) {
+				this.cleanOpRead();
+				this.clearReadBuffer();
 				this.handleProtocolError();
-				return;
+				return false;
 			}
 		}
 		if (this.activeStreams == 0) {
 			this.addKeepAliveCheck();
 		}
+		return true;
 	}
 
 	private boolean doReadFramePayLoad() {
@@ -145,7 +148,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		if (this.payloadIndex == this.payloadLength) {
 			this.payloadIndex = 0;
 			this.currentState = FRAME_STATE_READ_HEADER;
-			assert LOG.debug(this.channelId + " start handle frame payload");
+			assert LOG.assertDebug(this.channelId , " start handle frame payload");
 			if (frameType == FRAME_TYPE_DATA) {
 				handleDataFrame();
 			} else if (frameType == FRAME_TYPE_HEADERS) {
@@ -181,15 +184,22 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		byte[] buffer = cachePayload.buffer;
 		int lastStreamId = ((buffer[0] & 0x7f) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8 | buffer[3] & 0xff);
 		long errorCode = ((buffer[4] & 0xff) << 24 | (buffer[5] & 0xff) << 16 | (buffer[6] & 0xff) << 8 | buffer[7] & 0xff) & 0xFFFFFFFFL;
-		assert LOG.debug(buffer, 8, this.payloadLength);
-		assert LOG.debug(this.channelId + " call goAway(" + lastStreamId + "::int," + errorCode + "::long)");
+		if(LOG.enableInfo()){
+			String errStr ="";
+			try{
+				errStr = new String(buffer,8,this.payloadLength-8,StringUtil.US_ASCII);
+			}catch(Throwable error){
+				errStr = StringUtil.hexString(buffer,8,this.payloadLength-8);
+			}
+			LOG.info(this.channelId+" recv goAway{lastStreamId:"+lastStreamId+",errorCode:"+errorCode+",data:"+errStr);
+		}
 		goAway(lastStreamId, errorCode);
 	}
 
 	private void handleRstStreamFrame() {
 		byte[] buffer = cachePayload.buffer;
 		long errorCode = ((buffer[0] & 0xff) << 24 | (buffer[1] & 0xff) << 16 | (buffer[2] & 0xff) << 8 | buffer[3] & 0xff) & 0xFFFFFFFFL;
-		assert LOG.debug(this.channelId + " call resetStream(" + errorCode + "::long)");
+		assert LOG.assertDebug(this.channelId , " call resetStream(" , errorCode , "::long)");
 		resetStream(errorCode);
 	}
 
@@ -243,7 +253,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 					return;
 				}
 			}
-			assert LOG.debug(this.channelId + " parse http2 SETTING success:" + settings.toString());
+			assert LOG.assertDebug(this.channelId , " parse http2 SETTING success:" , settings.toString());
 			applySetting(settings);
 			writeSettingAck();
 		}
@@ -260,7 +270,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			// cannot depend on itself.");
 		}
 		final short weight = (short) ((buffer[4] & 0xFF) + 1);
-		assert LOG.debug(this.channelId + " call handlePriority(" + streamDependency + "::int," + weight + "::short," + exclusive + "::boolean)");
+		assert LOG.assertDebug(this.channelId , " call handlePriority(" + streamDependency , "::int," + weight , "::short," , exclusive , "::boolean)");
 		handlePriority(streamDependency, weight, exclusive);
 	}
 
@@ -278,10 +288,10 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		// "Received WINDOW_UPDATE with delta 0 for stream: %d", streamId);
 		// }
 		if (this.streamId == 0) {
-			assert LOG.debug(this.channelId + " call windowUpdate(" + windowSizeIncrement + "::int)");
+			assert LOG.assertDebug(this.channelId , " call windowUpdate(" , windowSizeIncrement , "::int)");
 			windowUpdate(windowSizeIncrement);
 		} else {
-			assert LOG.debug(this.channelId + " call streamWindowUpdate(" + windowSizeIncrement + "::int)");
+			assert LOG.assertDebug(this.channelId , " call streamWindowUpdate(" , windowSizeIncrement , "::int)");
 			streamWindowUpdate(windowSizeIncrement);
 		}
 	}
@@ -309,10 +319,10 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		// this.writeWindowUpdate(0, (this.localConnectionInitialWinodwSize -
 		// recvWindowSize));
 		if (payloadLength > 0) {
-			assert LOG.debug(this.channelId + " call writeWindowUpdate(0::int," + payloadLength + "::int)");
+			assert LOG.assertDebug(this.channelId , " call writeWindowUpdate(0::int," , payloadLength , "::int)");
 			this.writeWindowUpdate(0, payloadLength);
 		}
-		assert LOG.debug(this.channelId + " call handleStreamData(" + payloadLength + "::int," + Http2FlagsUtil.endOfStream(frameFlag) + "::boolean)");
+		assert LOG.assertDebug(this.channelId , " call handleStreamData(" , payloadLength , "::int," , Http2FlagsUtil.endOfStream(frameFlag) , "::boolean)");
 		this.handleStreamData(payloadLength, Http2FlagsUtil.endOfStream(frameFlag));
 	}
 
@@ -321,7 +331,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		if (Http2FlagsUtil.endOfHeaders(frameFlag)) {
 
 			DefaultHttpHeaders headers = this.decodeHeaders();
-			assert LOG.debug(this.channelId + " decodeHeader:" + (headers != null ? headers.toString() : "--------INVALID HEADERS"));
+			assert LOG.assertDebug(this.channelId , " decodeHeader:" , (headers != null ? headers.toString() : "--------INVALID HEADERS"));
 			if (headers != null) {
 				if (priorityInHeaders) {
 					recvHeaders(headers, streamDependency, weightInHeaders, exclusiveInHeaders, endOfStreamInHeaders);
@@ -372,7 +382,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			weightInHeaders = (short) ((buffer[this.cachePayload.ridx++] & 0xFF) + 1);
 			if (endOfHeaders) {
 				DefaultHttpHeaders headers = this.decodeHeaders();
-				assert LOG.debug(this.channelId + " decodeHeader:" + (headers != null ? headers.toString() : "--------INVALID HEADERS"));
+				assert LOG.assertDebug(this.channelId , " decodeHeader:" , (headers != null ? headers.toString() : "--------INVALID HEADERS"));
 				if (headers != null) {
 					recvHeaders(headers, streamDependency, weightInHeaders, exclusiveInHeaders, endOfStreamInHeaders);
 				}
@@ -382,7 +392,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			priorityInHeaders = false;
 			if (endOfHeaders) {
 				DefaultHttpHeaders headers = this.decodeHeaders();
-				assert LOG.debug(this.channelId + " decodeHeader:" + (headers != null ? headers.toString() : "--------INVALID HEADERS"));
+				assert LOG.assertDebug(this.channelId , " decodeHeader:" , (headers != null ? headers.toString() : "--------INVALID HEADERS"));
 				if (headers != null) {
 					recvHeaders(headers, endOfStreamInHeaders);
 				}
@@ -392,7 +402,8 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 	}
 
 	private boolean doReadFrameHeader() {
-		assert LOG.debug(this.rbuffer, this.ridx, this.widx);
+		
+//		assert LOG.trace(this.rbuffer, this.ridx, this.widx);
 		int nr = this.widx - this.ridx;
 		int readSize = Integer.min(FRAME_CONFIG_HEADER_SIZE - this.frameHeaderIndex, nr);
 		System.arraycopy(this.rBytes, ridx, this.frameReadBuffer, this.frameHeaderIndex, readSize);
@@ -413,7 +424,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			frameType = this.frameReadBuffer[3];
 			this.frameFlag = this.frameReadBuffer[4];
 			streamId = ((frameReadBuffer[5] & 0x7f) << 24 | (frameReadBuffer[6] & 0xff) << 16 | (frameReadBuffer[7] & 0xff) << 8 | frameReadBuffer[8] & 0xff);
-			assert LOG.debug(this.channelId + frameHeaderInfo(" read frame header success", payloadLength, frameType, frameFlag, streamId));
+			assert LOG.assertDebug(this.channelId ,frameHeaderInfo(" read frame header success", payloadLength, frameType, frameFlag, streamId));
 			this.currentState = FRAME_STATE_READ_DATA;
 
 			if (frameType == FRAME_TYPE_DATA) {
@@ -965,7 +976,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 		if (length == 0)
 			return StringUtil.EMPTY_STRING;
 		if (huffmanEncoded) {
-			assert LOG.debug(this.cachePayload.buffer, this.cachePayload.ridx, length);
+//			assert LOG.trace(this.cachePayload.buffer, this.cachePayload.ridx, length);
 			return Huffman.decode(this.cachePayload.buffer, this.cachePayload.ridx, length);
 		}
 		String ret = new String(this.cachePayload.buffer, this.cachePayload.ridx, length, StringUtil.US_ASCII);
@@ -1021,34 +1032,34 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 
 	public static String frameHeaderInfo(String prefix, int len, byte type, byte flag, int sid) {
 		StringBuilder sb = new StringBuilder();
-		sb.append(prefix).append(":\r\n{").append("type:");
+		sb.append(prefix).append(":\r\n{\r\n\t").append("type:");
 		if (type == FRAME_TYPE_DATA) {
-			sb.append("FRAME_TYPE_DATA,\r\nendStream:").append(Http2FlagsUtil.endOfStream(flag)).append(",\r\npadded:")
+			sb.append("FRAME_TYPE_DATA,\r\n\tendStream:").append(Http2FlagsUtil.endOfStream(flag)).append(",\r\n\tpadded:")
 					.append(Http2FlagsUtil.paddingPresent(flag));
 		} else if (type == FRAME_TYPE_HEADERS) {
-			sb.append("FRAME_TYPE_HEADERS,\r\nendStream:").append(Http2FlagsUtil.endOfStream(flag)).append(",\r\npadded:")
-					.append(Http2FlagsUtil.paddingPresent(flag)).append(",\r\npriority:").append(Http2FlagsUtil.priorityPresent(flag))
-					.append(",\r\nendHeaders:").append(Http2FlagsUtil.endOfHeaders(flag));
+			sb.append("FRAME_TYPE_HEADERS,\r\n\tendStream:").append(Http2FlagsUtil.endOfStream(flag)).append(",\r\n\tpadded:")
+					.append(Http2FlagsUtil.paddingPresent(flag)).append(",\r\n\tpriority:").append(Http2FlagsUtil.priorityPresent(flag))
+					.append(",\r\n\tendHeaders:").append(Http2FlagsUtil.endOfHeaders(flag));
 		} else if (type == FRAME_TYPE_PRIORITY) {
 			sb.append("FRAME_TYPE_PRIORITY");
 		} else if (type == FRAME_TYPE_RST_STREAM) {
 			sb.append("FRAME_TYPE_RST_STREAM");
 		} else if (type == FRAME_TYPE_SETTINGS) {
-			sb.append("FRAME_TYPE_SETTINGS,\r\nack:").append(Http2FlagsUtil.ack(flag));
+			sb.append("FRAME_TYPE_SETTINGS,\r\n\tack:").append(Http2FlagsUtil.ack(flag));
 		} else if (type == FRAME_TYPE_PUSH_PROMISE) {
-			sb.append("FRAME_TYPE_PUSH_PROMISE,\r\nendStream:").append(Http2FlagsUtil.endOfStream(flag)).append(",\r\npadded:")
-					.append(Http2FlagsUtil.paddingPresent(flag)).append(",\r\nendHeaders:").append(Http2FlagsUtil.endOfHeaders(flag));
+			sb.append("FRAME_TYPE_PUSH_PROMISE,\r\n\tendStream:").append(Http2FlagsUtil.endOfStream(flag)).append(",\r\n\tpadded:")
+					.append(Http2FlagsUtil.paddingPresent(flag)).append(",\r\n\tendHeaders:").append(Http2FlagsUtil.endOfHeaders(flag));
 		} else if (type == FRAME_TYPE_PING) {
-			sb.append("FRAME_TYPE_PING,\r\nack:").append(Http2FlagsUtil.ack(flag));
+			sb.append("FRAME_TYPE_PING,\r\n\tack:").append(Http2FlagsUtil.ack(flag));
 		} else if (type == FRAME_TYPE_GO_AWAY) {
 			sb.append("FRAME_TYPE_GO_AWAY");
 		} else if (type == FRAME_TYPE_WINDOW_UPDATE) {
 			sb.append("FRAME_TYPE_WINDOW_UPDATE");
 		} else if (type == FRAME_TYPE_CONTINUATION) {
-			sb.append("FRAME_TYPE_CONTINUATION,\r\nendHeaders:").append(Http2FlagsUtil.endOfHeaders(flag));
+			sb.append("FRAME_TYPE_CONTINUATION,\r\n\tendHeaders:").append(Http2FlagsUtil.endOfHeaders(flag));
 		} else
-			sb.append("FRAME_TYPE_UNKNOWN,\r\nflag:").append(flag);
-		sb.append(",\r\npayloadLength:").append(len).append(",\r\nstreamId:").append(sid).append("}");
+			sb.append("FRAME_TYPE_UNKNOWN,\r\n\tflag:").append(flag);
+		sb.append(",\r\n\tpayloadLength:").append(len).append(",\r\n\tstreamId:").append(sid).append("}");
 		return sb.toString();
 	}
 

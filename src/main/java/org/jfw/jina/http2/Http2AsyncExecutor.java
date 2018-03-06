@@ -100,4 +100,18 @@ public class Http2AsyncExecutor extends HttpAsyncExecutor {
 			throw new IllegalStateException("error package length with SslUtil.getEncryptedPacketLength");
 		}
 	}
+	public void unwrap(SSLEngine engine,ByteBuffer buffer)throws SSLException{
+		sslBuffer.clear();
+		SSLEngineResult result = engine.unwrap(buffer, sslBuffer);
+		bytesProduced = result.bytesProduced();
+		bytesConsumed = result.bytesConsumed();
+		SSLEngineResult.Status state = result.getStatus();
+		if (state == SSLEngineResult.Status.BUFFER_OVERFLOW) {
+			throw new IllegalArgumentException("too large encrypt data nosupported");
+		} else if (state == SSLEngineResult.Status.CLOSED) {
+			throw new IllegalStateException("sslEngine is closed");
+		}else if(state != SSLEngineResult.Status.OK){
+			throw new IllegalStateException("error package length");
+		}
+	}
 }

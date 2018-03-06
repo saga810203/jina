@@ -217,9 +217,7 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 		if (activeStreams == 0) {
 			if (this.goAwayed) {
 				this.writeCloseFrame();
-			} else {
-				this.addKeepAliveCheck();
-			}
+			} 
 		}
 	}
 
@@ -457,8 +455,8 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			if (stream.sendWindowSize >= frame.length) {
 				stream.sendWindowSize -= frame.length;
 				stream.state = Http2Stream.STREAM_STATE_CLOSED;
-				removeStream(stream);
 				writeDataFrame(frame);
+				removeStream(stream);
 			} else {
 				stream.first = stream.last = frame;
 			}
@@ -619,6 +617,7 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 
 	@Override
 	public void close() {
+		this.closeWriter();
 		if (this.javaChannel != null) {
 			this.removeKeepAliveCheck();
 			this.executor.freeDNode(this.keepAliveNode);
@@ -648,11 +647,14 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 
 	@Override
 	protected void handleInputClose() {
+		if(!this.goAwayed){
 		this.handleProtocolError();
+		}
 	}
 
 	@Override
 	public void keepAliveTimeout() {
+		assert LOG.assertDebug(this.channelId," invoke keepAliveTimeout");
 		this.removeKeepAliveCheck();
 		if (!goAwayed) {
 			if (lastFrame == null && dataLast == null && activeStreams == 0) {

@@ -215,8 +215,7 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 					selectCnt = 1;
 					break;
 				}
-
-				assert LOG.debug("invoke select("+timeoutMillis+")");
+				assert LOG.assertTrace("invoke select(",timeoutMillis,")");
 				int selectedKeys = selector.select(timeoutMillis);
 				selectCnt++;
 
@@ -291,15 +290,16 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 	}
 
 	public void handleRunningTask() {
+		assert LOG.assertDebug("invoke handleRunningTask()");
 		try {
 			if (runningTasks.isEmpty()) {
-				assert LOG.debug("invoke select(wakenUp.getAndSet(false));");
+				assert LOG.assertTrace("invoke select(wakenUp.getAndSet(false));");
 				select(wakenUp.getAndSet(false));
 				if (wakenUp.get()) {
 					selector.wakeup();
 				}
 			} else {
-				assert LOG.debug("invoke selectNow()");
+				assert LOG.assertTrace("invoke selectNow()");
 				selectNow();
 			}
 			needsToSelectAgain = false;
@@ -405,7 +405,6 @@ public class NioAsyncExecutor extends AbstractAsyncExecutor{
 
 	private void processSelectedKey(SelectionKey k, NioAsyncChannel ch) {
 		if (!k.isValid()) {
-			ch.close();
 			return;
 		}
 		try {

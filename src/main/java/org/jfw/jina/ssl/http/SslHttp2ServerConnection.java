@@ -1,6 +1,7 @@
 package org.jfw.jina.ssl.http;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.channels.SocketChannel;
 
 import javax.net.ssl.SSLEngine;
@@ -21,8 +22,7 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 	private static final Logger LOG = LogFactory.getLog(SslHttp2ServerConnection.class);
 	protected ByteBuffer sslReadBuffer;
 	protected int sslCapacity;
-	protected int sslRidx;
-	protected int sslWidx;
+	protected boolean readSslHeader;
 
 	private JdkSslEngine wrapEngine;
 	private SSLEngine engine;
@@ -33,9 +33,8 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 		this.setService(service);
 		this.key = sslChannel.getSelectionKey();
 		this.sslReadBuffer = sslChannel.getSslReadBuffer();
-		this.sslRidx = sslChannel.getSslRidx();
-		this.sslWidx = sslChannel.getSslWidx();
 		this.sslCapacity = this.sslReadBuffer.capacity();
+		this.readSslHeader = true;
 		this.wrapEngine = sslChannel.getWrapSslEngine();
 		this.engine = this.wrapEngine.getWrappedEngine();
 		this.outputCache.free(Handler.NOOP);
@@ -47,44 +46,120 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 		rlen = sslChannel.rlen;
 	}
 
+	private static final int _ensureCapacity = ~(8192 - 1);
+
+	protected void ensureCapacity(int size) {
+		assert LOG.assertDebug(this.channelId, " invoke ensureCapacity(", size, ")");
+		// int nsize =((size + 8192 - 1) & (~(8192 - 1)));
+		int nsize = (size + 8191) & _ensureCapacity;
+		assert LOG.assertTrace("nsize=", nsize);
+		ByteBuffer bb = ByteBuffer.allocate(nsize);
+		bb.order(ByteOrder.BIG_ENDIAN);
+		bb.limit(size);
+		this.sslReadBuffer.flip();
+		bb.put(this.sslReadBuffer);
+		this.sslCapacity = nsize;
+		this.sslReadBuffer = bb;
+	}
+
+	private boolean readSslRecord() {
+		assert LOG.assertDebug(this.channelId, " invoke readSslRecord()");
+		int len = 0;
+		try {
+			len = this.javaChannel.read(sslReadBuffer);
+		} catch (Throwable e) {
+			if (LOG.enableWarn()) {
+				LOG.warn(this.channelId + "javaChannel.read error", e);
+			}
+			this.removeKeepAliveCheck();
+			this.cleanOpRead();
+			this.handleInputClose();
+			return false;
+		}
+		if (sslReadBuffer.hasRemaining()) {
+			if (len < 0) {
+				this.removeKeepAliveCheck();
+				this.cleanOpRead();
+				this.handleInputClose();
+			}
+			// readSslHeader = true or false;
+			return false;
+		} else {
+			if (readSslHeader) {
+				len = SslUtil.getTlsPacketLength(sslReadBuffer);
+				if (len > 0) {
+					if (len > this.sslCapacity) {
+						this.ensureCapacity(len);
+					} else {
+						this.sslReadBuffer.limit(len);
+					}
+					try {
+						len = this.javaChannel.read(sslReadBuffer);
+					} catch (Throwable e) {
+						if (LOG.enableWarn()) {
+							LOG.warn(this.channelId + "javaChannel.read error", e);
+						}
+						this.removeKeepAliveCheck();
+						this.cleanOpRead();
+						this.handleInputClose();
+						return false;
+					}
+					if (sslReadBuffer.hasRemaining()) {
+						if (len < 0) {
+							this.removeKeepAliveCheck();
+							this.cleanOpRead();
+							this.handleInputClose();
+						}
+						readSslHeader = false;
+						// readSslHeader = false;
+						return false;
+					} else {
+						// readSslHeader = true;
+						return true;
+					}
+				} else {
+					if (LOG.enableWarn()) {
+						LOG.warn(this.channelId + "read ssl record length error:" + len);
+					}
+					this.removeKeepAliveCheck();
+					this.cleanOpRead();
+					this.handleInputClose();
+					return false;
+				}
+			} else {
+				// readSslHeader = false;
+				readSslHeader = true;
+				return true;
+			}
+		}
+	}
+
 	@Override
 	public void read() {
 		int len = 0;
-		for (;;) {
-			try {
-				len = this.javaChannel.read(sslReadBuffer);
-			} catch (Throwable e) {
-				if (LOG.enableWarn()) {
-					LOG.warn(this.channelId + " read os buffer error", e);
-				}
-				this.close();
-				return;
-			}
-			assert LOG.debug(this.channelId + " read os buffer size is " + len);
-			if (len == 0) {
-				break;
-			} else if (len < 0) {
-				unwrap();
-				if (this.writeException == null) {
-					this.cleanOpRead();
-					this.handleInputClose();
-				}
-				return;
-			}
-			this.sslWidx += len;
-			if (this.sslWidx >= sslCapacity) {
-				if (this.sslRidx > 0) {
-					this.compactSslReadBuffer();
+		if (this.javaChannel != null) {
+			for (;;) {
+				if (this.readSslRecord()) {
+					this.sslReadBuffer.flip();
+
 				} else {
-					this.extendSslReadBuffer();
+					return;
+				}
+				if (unwrap()) {
+					this.sslReadBuffer.clear();
+					this.sslReadBuffer.limit(5);
+				} else {
+					return;
 				}
 			}
 		}
-		unwrap();
 	}
 
 	@Override
 	public void close() {
+		if(null!= this.cacheWriteListener){
+			executor.safeInvokeFailed(this.cacheWriteListener, this.writeException);
+		}
 		super.close();
 		if (this.wrapEngine != null) {
 			try {
@@ -98,82 +173,29 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 		}
 	}
 
-	private void compactSslReadBuffer() {
-		if (this.sslRidx == this.sslWidx) {
-			this.sslReadBuffer.clear();
-		} else if (this.sslRidx > 0) {
-			this.sslReadBuffer.flip();
-			this.sslReadBuffer.position(this.sslRidx);
-			this.sslReadBuffer.compact();
-			this.sslWidx = this.sslWidx - this.sslRidx;
-			this.sslRidx = 0;
-			this.sslReadBuffer.limit(this.sslCapacity).position(sslWidx);
+	private boolean unwrap() {
+		try {
+			this.executor.unwrap(this.engine, this.sslReadBuffer);
+		} catch (Exception e) {
+			if (LOG.enableWarn()) {
+				LOG.warn(this.channelId + " unwrap error", e);
+			}
+			this.cleanOpRead();
+			this.removeKeepAliveCheck();
+			this.handleInputClose();
+			return false;
 		}
-	}
+		int produced = executor.bytesProduced;
+		assert produced > 0;
+		// if (produced > 0) {
+		this.ensureCapacity4ReadBuffer(produced);
+		this.rbuffer.put(executor.sslByteArray, 0, produced);
+		this.widx += produced;
+		// }
 
-	private void extendSslReadBuffer() {
-		this.sslCapacity += 4096;
-		ByteBuffer buffer = ByteBuffer.allocate(sslCapacity);
-		buffer.put((ByteBuffer) sslReadBuffer.flip().position(this.sslRidx));
-		this.sslWidx = this.sslWidx - this.sslRidx;
-		this.sslRidx = 0;
-		this.sslReadBuffer = buffer;
-	}
-
-	private void unwrap() {
-		for (;;) {
-			int dl = this.sslWidx - this.sslRidx;
-			assert LOG.debug(this.channelId + " packetLen == " + this.packetLen + " dl == " + dl);
-			if (this.packetLen > 0) {
-				if (dl < this.packetLen) {
-					break;
-				}
-			} else {
-				if (dl < SslUtil.SSL_RECORD_HEADER_LENGTH) {
-					break;
-				}
-				int pl = SslUtil.getEncryptedPacketLength(this.sslReadBuffer, this.sslRidx);
-				assert LOG.debug(this.channelId + " read ssl record length:" + pl);
-				if (pl == SslUtil.NOT_ENCRYPTED) {
-					if (LOG.enableWarn()) {
-						LOG.warn(this.channelId + " invalid ssl record length:" + pl);
-					}
-					this.writeException = new RuntimeException("invalid ssl record length");
-					this.close();
-					return;
-				} else {
-					this.packetLen = pl;
-					if (dl < pl) {
-						break;
-					}
-				}
-			}
-			try {
-				this.executor.unwrap(this.engine, this.sslReadBuffer, this.sslRidx, packetLen);
-			} catch (Exception e) {
-				if (LOG.enableWarn()) {
-					LOG.warn(this.channelId + " unwrap error", e);
-				}
-				this.writeException = e;
-				this.close();
-				return;
-			}
-			this.packetLen = 0;
-			assert LOG.debug(this.channelId + " unwrap data length:" + executor.bytesProduced);
-			this.sslRidx += executor.bytesConsumed;
-			int produced = executor.bytesProduced;
-			assert LOG.debug(this.channelId + " unwrap data length:" + produced + " encrypt data length:" + executor.bytesConsumed);
-			if (produced > 0) {
-				this.ensureCapacity4ReadBuffer(produced);
-				this.rbuffer.put(executor.sslByteArray, 0, produced);
-				this.widx += produced;
-			}
-		}
 		int len = this.widx - this.ridx;
-		if (len > 0) {
-			assert LOG.debug(this.channelId + " call handleRead(" + len + ")");
-			this.handleRead(len);
-		}
+		this.handleRead(len);
+		return this.currentState > 0;
 	}
 
 	private boolean wrapToCache(org.jfw.jina.http2.impl.Http2FrameWriter.Frame frame) {
@@ -203,32 +225,33 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 				}
 				idx += wl;
 			}
-		}else{
-			this.outputCache.offer(EMPTY_BUFFER,null);
+		} else {
+			this.outputCache.offer(EMPTY_BUFFER, null);
 		}
 		return true;
 	}
 
+	private TaskCompletionHandler cacheWriteListener = null;;
+
 	private boolean writeCacheData() throws Throwable {
+		assert this.writeException == null;
 		for (;;) {
 			if (outputCache.isEmpty()) {
 				return true;
 			}
 			ByteBuffer buffer = outputCache.peek();
-			if (this.writeException == null) {
-				if (buffer.hasRemaining()) {
-					try {
-						javaChannel.write(buffer);
-					} catch (Throwable e) {
-						this.writeException = e;
-						throw e;
-					}
-					if (buffer.hasRemaining()) {
-						return false;
-					}
+			if (buffer.hasRemaining()) {
+				try {
+					javaChannel.write(buffer);
+				} catch (Throwable e) {
+					this.writeException = e;
+					throw e;
 				}
-				outputCache.unsafeShift();
+				if (buffer.hasRemaining()) {
+					return false;
+				}
 			}
+			outputCache.unsafeShift();
 		}
 	}
 
@@ -246,21 +269,22 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 				return;
 			}
 			if (writeOver) {
-				Frame frame = firstFrame;
-				firstFrame = frame.next;
-				TaskCompletionHandler listenner = frame.listenner;
-				firstFrame = frame.next;
-				freeFrame(frame);
-				if (listenner != null) {
-					executor.safeInvokeCompleted(frame.listenner);
+				if(null!= cacheWriteListener){
+					executor.safeInvokeCompleted(this.cacheWriteListener);
+					cacheWriteListener = null;
 				}
-				if (firstFrame != null) {
-					if (!this.wrapToCache(firstFrame)) {
+				Frame frame = firstFrame;
+				if (frame != null) {
+					this.cacheWriteListener = frame.listenner;
+					firstFrame = frame.next;
+					if(firstFrame==null){
+						this.lastFrame = null;
+					}
+					if (!this.wrapToCache(frame)) {
 						this.close();
 						return;
 					}
 				} else {
-					this.lastFrame = null;
 					this.cleanOpWrite();
 					return;
 				}
@@ -269,7 +293,5 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 			}
 		}
 	}
-
-
 
 }

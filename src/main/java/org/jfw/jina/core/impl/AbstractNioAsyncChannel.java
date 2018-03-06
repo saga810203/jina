@@ -75,37 +75,41 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 	protected void afterRegister() {
 	}
 
-	protected void hanldReadException(IOException e) {
-		if (LOG.enableWarn()) {
-			LOG.warn(this.channelId + " handle read error", e);
-		}
-		this.close();
-	}
+	// protected void hanldReadException(IOException e) {
+	// if (LOG.enableWarn()) {
+	// LOG.warn(this.channelId + " handle read error", e);
+	// }
+	// this.close();
+	// }
 
-	protected void closeJavaChannel() {
+	protected boolean closeJavaChannel() {
 		assert this.executor.inLoop();
-		SocketChannel jc = this.javaChannel;
-		SelectionKey k = this.key;
-		this.javaChannel = null;
-		this.key = null;
-		if (k != null) {
-			try {
-				k.interestOps(0);
-				k.cancel();
-			} catch (Exception e) {
+		if (null != this.javaChannel) {
+			SocketChannel jc = this.javaChannel;
+			SelectionKey k = this.key;
+			this.javaChannel = null;
+			this.key = null;
+			if (k != null) {
+				try {
+					k.interestOps(0);
+					k.cancel();
+				} catch (Exception e) {
+				}
 			}
-		}
-		if (jc != null) {
-			try {
-				jc.close();
-			} catch (Throwable t) {
+			if (jc != null) {
+				try {
+					jc.close();
+				} catch (Throwable t) {
 
+				}
 			}
+			this.outputCache.clear(this.WRITE_ERROR_HANDLER);
+			return true;
 		}
-		this.outputCache.clear(this.WRITE_ERROR_HANDLER);
+		return false;
 	}
 
-	public abstract void handleRead(int len);
+	public abstract boolean handleRead(int len);
 
 	protected void compactReadBuffer() {
 		if (this.ridx > 0) {
@@ -149,49 +153,56 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 	@Override
 	public void read() {
-		int rc = 0;
-		try {
-			rc = this.javaChannel.read(this.rbuffer);
-		} catch (ClosedChannelException e) {
-			int len = this.widx - this.ridx;
-			if (len > 0) {
-				this.handleRead(len);
+		assert LOG.assertDebug(this.channelId, " invoke read()");
+		if (null != this.javaChannel) {
+			int rc = 0;
+			try {
+				rc = this.javaChannel.read(this.rbuffer);
+			} catch (ClosedChannelException e) {
+				int len = this.widx - this.ridx;
+				if (len > 0) {
+					this.handleRead(len);
+				}
+				assert null != this.javaChannel;
+				// if (this.javaChannel != null) {
+				this.cleanOpRead();
+				handleInputClose();
+				// }
+				return;
+			} catch (IOException e) {
+				if (LOG.enableWarn()) {
+					LOG.warn(this.channelId + " javaChannel.read  error", e);
+				}
+				int len = this.widx - this.ridx;
+				if (len > 0) {
+					this.handleRead(len);
+				}
+				assert null != this.javaChannel;
+				// if (this.javaChannel != null) {
+				this.cleanOpRead();
+				handleInputClose();
+				// }
+				return;
 			}
-			if (this.javaChannel != null) {
+			assert LOG.assertTrace(" read from os buffer bytes size is ", rc);
+			if (rc == 0) {
+				int len = this.widx - this.ridx;
+				if (len > 0) {
+					this.handleRead(len);
+				}
+				return;
+			} else if (rc > 0) {
+				this.widx += rc;
+				this.handleRead(this.widx - this.ridx);
+				return;
+			} else {
+				int len = this.widx - this.ridx;
+				if (len > 0) {
+					this.handleRead(len);
+				}
 				this.cleanOpRead();
 				handleInputClose();
 			}
-			return;
-		} catch (IOException e) {
-			int len = this.widx - this.ridx;
-			if (len > 0) {
-				this.handleRead(len);
-			}
-			if (this.javaChannel != null) {
-				this.cleanOpRead();
-				handleInputClose();
-			}
-			this.hanldReadException(e);
-			return;
-		}
-		assert LOG.debug(this.channelId + " read from os buffer bytes size is " + rc);
-		if (rc == 0) {
-			int len = this.widx - this.ridx;
-			if (len > 0) {
-				this.handleRead(len);
-			}
-			return;
-		} else if (rc > 0) {
-			this.widx += rc;
-			this.handleRead(this.widx - this.ridx);
-			return;
-		} else {
-			int len = this.widx - this.ridx;
-			if (len > 0) {
-				this.handleRead(len);
-			}
-			this.cleanOpRead();
-			handleInputClose();
 		}
 	}
 
@@ -384,6 +395,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 
 	@Override
 	public void write() {
+		assert LOG.assertDebug(this.channelId," invoke write()");
 		for (;;) {
 			TagNode tagNode = outputCache.peekTagNode();
 			if (tagNode == null) {
@@ -399,7 +411,7 @@ public abstract class AbstractNioAsyncChannel<T extends NioAsyncExecutor> implem
 					this.javaChannel.write(buf);
 				} catch (IOException e) {
 					if (LOG.enableWarn()) {
-						LOG.warn(this.channelId + " write data error", e);
+						LOG.warn(this.channelId + " javaChannel.write data error", e);
 					}
 					this.writeException = e;
 					this.close();

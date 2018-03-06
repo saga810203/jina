@@ -51,14 +51,13 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 	private AsyncTask keepAliveCheckTask = new AsyncTaskAdapter() {
 		@Override
 		public void execute(AsyncExecutor executor) throws Throwable {
-			assert LOG.debug("invoke keepAliveCheckTask()");
+			assert LOG.assertTrace("invoke keepAliveCheckTask()");
 			long deadlineTime = System.currentTimeMillis() - keepAliveTimeout;
 			for(;;){
 				KeepAliveCheck kac = keepAliveQueue.peek();
 				if(kac==null || (kac.getKeepAliveTime()> deadlineTime)){
 					return;
 				}
-				keepAliveQueue.unsafeShift();
 				kac.keepAliveTimeout();
 			}
 		}
@@ -67,7 +66,6 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 		public void completed(AsyncExecutor executor) {
 			executor.schedule(this, keepAliveCheckRate, TimeUnit.MILLISECONDS);
 		}
-
 	};
 
 	@Override
