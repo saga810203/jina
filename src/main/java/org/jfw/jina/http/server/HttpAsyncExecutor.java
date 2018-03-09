@@ -23,7 +23,7 @@ public class HttpAsyncExecutor extends NioAsyncExecutor {
 	static {
 		KEEP_ALIVE_CONFIG = new KeepAliveConfig();
 		KEEP_ALIVE_CONFIG.setKeepAliveCheckRate(1000);
-		KEEP_ALIVE_CONFIG.setKeepAliveTimeout(1000 * 3);
+		KEEP_ALIVE_CONFIG.setKeepAliveTimeout(1000 *15);
 	}
 
 	private final DQueue<KeepAliveCheck> keepAliveQueue;

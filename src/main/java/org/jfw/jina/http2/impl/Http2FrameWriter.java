@@ -6,6 +6,7 @@ import java.nio.channels.SocketChannel;
 import java.util.Map;
 
 import org.jfw.jina.core.AsyncExecutor;
+import org.jfw.jina.core.AsyncTaskAdapter;
 import org.jfw.jina.core.TaskCompletionHandler;
 import org.jfw.jina.http.HttpConsts;
 import org.jfw.jina.http.HttpHeaders;
@@ -46,7 +47,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	protected void writeFrame(Frame frame) {
-		assert LOG.assertDebug(this.channelId ," ", frameHeaderInfo("writeFrame", frame.buffer));
+		assert LOG.assertInfo(this.channelId, " ", frameHeaderInfo("writeFrame", frame.buffer));
 		if (lastFrame == null) {
 			firstFrame = lastFrame = frame;
 			this.setOpWrite();
@@ -58,8 +59,8 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 
 	protected void writeFrameList(Frame head, Frame tail) {
 		assert head != tail;
-		assert LOG.assertDebug(this.channelId , " " , frameHeaderInfo("writeFrameList head==>", head.buffer));
-		assert LOG.assertDebug(this.channelId , " " , frameHeaderInfo("writeFrameList tail==>", tail.buffer));
+		assert LOG.assertInfo(this.channelId, " ", frameHeaderInfo("writeFrameList head==>", head.buffer));
+		assert LOG.assertInfo(this.channelId, " ", frameHeaderInfo("writeFrameList tail==>", tail.buffer));
 		if (lastFrame == null) {
 			firstFrame = head;
 			lastFrame = tail;
@@ -71,7 +72,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	public void writeHeaders(int streamId, HttpHeaders headers, boolean endOfStream) {
-		assert LOG.assertDebug(this.channelId , " writer headers:" , headers.toString());
+		assert LOG.assertDebug(this.channelId, " writer headers:", headers.toString());
 		this.hpackEncoder.encodeHeaders(streamId, headers, endOfStream);
 		Frame f = this.hpackEncoder.firstHeaderFrame;
 		Frame l = this.hpackEncoder.lastHeaderFrame;
@@ -83,7 +84,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	public void writeHeaders(int streamId, int responseStatus, HttpHeaders headers, boolean endOfStream) {
-		assert LOG.assertDebug(this.channelId , " writer headers [response status = " , responseStatus , "] :  " , headers.toString());
+		assert LOG.assertDebug(this.channelId, " writer headers [response status = ", responseStatus, "] :  ", headers.toString());
 		this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, endOfStream);
 		Frame f = this.hpackEncoder.firstHeaderFrame;
 		Frame l = this.hpackEncoder.lastHeaderFrame;
@@ -95,7 +96,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 	}
 
 	protected void writeHeaders(int streamId, int responseStatus, HttpHeaders headers, TaskCompletionHandler task) {
-		assert LOG.assertDebug(this.channelId , " writer headers [response status = " , responseStatus + "] :  " , headers.toString());
+		assert LOG.assertDebug(this.channelId, " writer headers [response status = ", responseStatus + "] :  ", headers.toString());
 		assert task != null;
 		this.hpackEncoder.encodeHeaders(streamId, responseStatus, headers, true);
 		Frame f = this.hpackEncoder.firstHeaderFrame;
@@ -284,9 +285,22 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 		frame.type = FRAME_TYPE_GO_AWAY;
 		frame.buffer = buf;
 		frame.next = null;
+		frame.listenner = new TaskCompletionHandler() {
+			@Override
+			public void failed(Throwable exc, AsyncExecutor executor) {
+			}
+			@Override
+			public void completed(AsyncExecutor executor) {
+				executor.submit(new AsyncTaskAdapter() {
+					@Override
+					public void execute(AsyncExecutor executor) throws Throwable {
+						close();
+					}
+				});
+			}
+		};
 		writeFrame(frame);
 	}
-
 	@Override
 	public void writeWindowUpdate(int streamId, int windowSizeIncrement) {
 		assert windowSizeIncrement > 0;
@@ -372,6 +386,7 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			}
 		}
 	}
+
 	@Override
 	public void write() {
 		Frame frame;
@@ -604,9 +619,11 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 				encodeLiteral(name, value, IndexType.NONE, nameIndex);
 				return;
 			}
+			
+			
 
 			int index = localDynaTable.getIndex(name, value);
-			if (index != 0) {
+			if (index != -1) {
 				index += HpackStaticTable.length;
 				// Section 6.1. Indexed Header Field Representation
 				encodeInteger(0x80, 7, index);
@@ -730,68 +747,61 @@ public abstract class Http2FrameWriter<T extends Http2AsyncExecutor> extends Htt
 			}
 		}
 	}
-	
-/**
-FRAME_TYPE:4
-FRAME_FLAG:value = 0 ()
-FRAME_PAYLOAD_LENGTH:18
-FRAME_STREAM_ID:0
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-0x0,0x0,0x0,0x4,0x1,0x0,0x0,0x0,0x0,         :{type:FRAME_TYPE_SETTINGS,ack:true,payloadLength:0,streamId:0}
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-FRAME_TYPE:8
-FRAME_FLAG:value = 0 ()
-FRAME_PAYLOAD_LENGTH:4
-FRAME_STREAM_ID:0
-????????????????????????????
-FRAME_TYPE:1
-FRAME_FLAG:value = 37 (ACK,END_OF_HEADERS,END_OF_STREAM,PRIORITY_PRESENT,)
-FRAME_PAYLOAD_LENGTH:236
-FRAME_STREAM_ID:1
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-0x0,0x0,0xa,0x1,0x24,0x0,0x0,0x0,0x1, {type:FRAME_TYPE_HEADERS,endStream:false,padded:false,priority:true,endHeaders:true,payloadLength:10,streamId:1}
-0x0,0x0,0x0,0x0,0xf, 0x3f,0xe1,0xff,0x3,0x88,
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x1,     {type:FRAME_TYPE_DATA,endStream:true,padded:false,payloadLength:24,streamId:1}
-0x48,0x65,0x6c,0x6c,0x6f,0x20,0x57,0x6f,0x72,0x6c,0x64,0x20,0x2d,0x20,0x76,0x69,
-0x61,0x20,0x48,0x54,0x54,0x50,0x2f,0x32,
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-????????????????????????????
-0x0,0x0,0x0,0x4,0x1,0x0,0x0,0x0,0x0, FRAME_TYPE:4FRAME_FLAG:value = 1 (ACK,END_OF_STREAM,) FRAME_PAYLOAD_LENGTH:0FRAME_STREAM_ID:0
-????????????????????????????
-
-0x0,0x0,0x4d,0x1,0x25,0x0,0x0,0x0,0x3,0x80,0x0,0x0,0x0,0xdb,0x82,0xc4,
-0x87,0x0,0x84,0xb9,0x58,0xd3,0x3f,0x89,0x62,0x51,0xf7,0x31,0xf,0x52,0xe6,0x21,
-0xff,0xc1,0x53,0x9e,0x35,0x23,0x98,0xac,0x78,0x2c,0x75,0xfd,0x1a,0x91,0xcc,0x56,
-0x7,0x5d,0x53,0x7d,0x1a,0x91,0xcc,0x56,0x3e,0x7e,0xbe,0x58,0xf9,0xfb,0xed,0x0,
-0x17,0x7b,0x73,0x90,0x9d,0x29,0xad,0x17,0x18,0x60,0x2f,0x89,0x70,0xb8,0xf2,0xec,
-0xae,0x17,0x1c,0x63,0xc1,0xc0,????????????????????????????
-FRAME_TYPE:1
-FRAME_FLAG:value = 37 (ACK,END_OF_HEADERS,END_OF_STREAM,PRIORITY_PRESENT,)
-FRAME_PAYLOAD_LENGTH:77
-FRAME_STREAM_ID:3
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-0x0,0x0,0x6,0x1,0x24,0x0,0x0,0x0,0x3,0x0,0x0,0x0,0x0,0xf,
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-0x88,
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x3,
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-0x48,0x65,0x6c,0x6c,0x6f,0x20,0x57,0x6f,0x72,0x6c,0x64,0x20,0x2d,0x20,0x76,0x69,
-0x61,0x20,0x48,0x54,0x54,0x50,0x2f,0x32,
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
+	/**
+	 * FRAME_TYPE:4 FRAME_FLAG:value = 0 () FRAME_PAYLOAD_LENGTH:18
+	 * FRAME_STREAM_ID:0 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * 0x0,0x0,0x0,0x4,0x1,0x0,0x0,0x0,0x0,
+	 * :{type:FRAME_TYPE_SETTINGS,ack:true,payloadLength:0,streamId:0}
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ FRAME_TYPE:8 FRAME_FLAG:value =
+	 * 0 () FRAME_PAYLOAD_LENGTH:4 FRAME_STREAM_ID:0
+	 * ???????????????????????????? FRAME_TYPE:1 FRAME_FLAG:value = 37
+	 * (ACK,END_OF_HEADERS,END_OF_STREAM,PRIORITY_PRESENT,)
+	 * FRAME_PAYLOAD_LENGTH:236 FRAME_STREAM_ID:1
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 0x0,0x0,0xa,0x1,0x24,0x0,0x0,0x0,0x1,
+	 * {type:FRAME_TYPE_HEADERS,endStream:false,padded:false,priority:true,
+	 * endHeaders:true,payloadLength:10,streamId:1} 0x0,0x0,0x0,0x0,0xf,
+	 * 0x3f,0xe1,0xff,0x3,0x88, ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x1,
+	 * {type:FRAME_TYPE_DATA,endStream:true,padded:false,payloadLength:24,
+	 * streamId:1}
+	 * 0x48,0x65,0x6c,0x6c,0x6f,0x20,0x57,0x6f,0x72,0x6c,0x64,0x20,0x2d,0x20,
+	 * 0x76,0x69, 0x61,0x20,0x48,0x54,0x54,0x50,0x2f,0x32,
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * 
+	 * ???????????????????????????? 0x0,0x0,0x0,0x4,0x1,0x0,0x0,0x0,0x0,
+	 * FRAME_TYPE:4FRAME_FLAG:value = 1 (ACK,END_OF_STREAM,)
+	 * FRAME_PAYLOAD_LENGTH:0FRAME_STREAM_ID:0 ????????????????????????????
+	 * 
+	 * 0x0,0x0,0x4d,0x1,0x25,0x0,0x0,0x0,0x3,0x80,0x0,0x0,0x0,0xdb,0x82,0xc4,
+	 * 0x87,0x0,0x84,0xb9,0x58,0xd3,0x3f,0x89,0x62,0x51,0xf7,0x31,0xf,0x52,0xe6,
+	 * 0x21,
+	 * 0xff,0xc1,0x53,0x9e,0x35,0x23,0x98,0xac,0x78,0x2c,0x75,0xfd,0x1a,0x91,
+	 * 0xcc,0x56,
+	 * 0x7,0x5d,0x53,0x7d,0x1a,0x91,0xcc,0x56,0x3e,0x7e,0xbe,0x58,0xf9,0xfb,0xed
+	 * ,0x0,
+	 * 0x17,0x7b,0x73,0x90,0x9d,0x29,0xad,0x17,0x18,0x60,0x2f,0x89,0x70,0xb8,
+	 * 0xf2,0xec, 0xae,0x17,0x1c,0x63,0xc1,0xc0,????????????????????????????
+	 * FRAME_TYPE:1 FRAME_FLAG:value = 37
+	 * (ACK,END_OF_HEADERS,END_OF_STREAM,PRIORITY_PRESENT,)
+	 * FRAME_PAYLOAD_LENGTH:77 FRAME_STREAM_ID:3
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * 0x0,0x0,0x6,0x1,0x24,0x0,0x0,0x0,0x3,0x0,0x0,0x0,0x0,0xf,
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 0x88,
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x3,
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * 0x48,0x65,0x6c,0x6c,0x6f,0x20,0x57,0x6f,0x72,0x6c,0x64,0x20,0x2d,0x20,
+	 * 0x76,0x69, 0x61,0x20,0x48,0x54,0x54,0x50,0x2f,0x32,
+	 * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	 * 
 	 */
-	
-	public static void main(String[] args){
-		byte[] buffer = new byte[]{0x0,0x0,0x18,0x0,0x1,0x0,0x0,0x0,0x1,};
-	System.out.println(Http2FrameReader.frameHeaderInfo("", buffer, 0));
-		
-		
+
+	public static void main(String[] args) {
+		byte[] buffer = new byte[] { 0x0, 0x0, 0x18, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, };
+		System.out.println(Http2FrameReader.frameHeaderInfo("", buffer, 0));
+
 	}
 }

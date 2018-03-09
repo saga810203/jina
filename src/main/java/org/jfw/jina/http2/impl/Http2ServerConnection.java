@@ -660,7 +660,7 @@ public class Http2ServerConnection<H extends Http2AsyncExecutor> extends Http2Co
 			if (lastFrame == null && dataLast == null && activeStreams == 0) {
 				this.goAwayed = true;
 				this.writeGoAway(nextStreamId == 1 ? 0 : (nextStreamId - 2), 0, executor.ouputCalcBuffer, 0, 0);
-				this.writeCloseFrame();
+//				this.writeCloseFrame();
 			} else {
 				this.addKeepAliveCheck();
 				this.setOpRead();

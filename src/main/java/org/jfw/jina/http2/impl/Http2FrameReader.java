@@ -424,7 +424,7 @@ public abstract class Http2FrameReader<T extends Http2AsyncExecutor> extends Abs
 			frameType = this.frameReadBuffer[3];
 			this.frameFlag = this.frameReadBuffer[4];
 			streamId = ((frameReadBuffer[5] & 0x7f) << 24 | (frameReadBuffer[6] & 0xff) << 16 | (frameReadBuffer[7] & 0xff) << 8 | frameReadBuffer[8] & 0xff);
-			assert LOG.assertDebug(this.channelId ,frameHeaderInfo(" read frame header success", payloadLength, frameType, frameFlag, streamId));
+			assert LOG.assertInfo(this.channelId ,frameHeaderInfo(" read frame header success", payloadLength, frameType, frameFlag, streamId));
 			this.currentState = FRAME_STATE_READ_DATA;
 
 			if (frameType == FRAME_TYPE_DATA) {

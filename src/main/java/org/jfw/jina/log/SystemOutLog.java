@@ -15,7 +15,7 @@ public final class SystemOutLog implements Logger {
 	public static final int TRACE = 25;
 	public static final int DISABLE = 0;
 
-	private static int LEVEL = ALL;
+	private static int LEVEL = INFO;
 
 	private static final SimpleDateFormat sf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
 	public static final SystemOutLog INS = new SystemOutLog();

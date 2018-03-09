@@ -157,6 +157,7 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 
 	@Override
 	public void close() {
+		assert LOG.assertInfo(this.channelId," close()");
 		if(null!= this.cacheWriteListener){
 			executor.safeInvokeFailed(this.cacheWriteListener, this.writeException);
 		}
@@ -194,8 +195,8 @@ public class SslHttp2ServerConnection extends Http2ServerConnection<Http2AsyncEx
 		// }
 
 		int len = this.widx - this.ridx;
-		this.handleRead(len);
-		return this.currentState > 0;
+		return this.handleRead(len);
+//		return this.currentState > 0;
 	}
 
 	private boolean wrapToCache(org.jfw.jina.http2.impl.Http2FrameWriter.Frame frame) {
